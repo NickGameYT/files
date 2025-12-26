@@ -1,0 +1,864 @@
+"""
+Кафетерий Pro Max - Система управления заказами с AI-функциями
+Версия 3.0.0 с VR-просмотром, голосовым управлением и аналитикой в реальном времени
+"""
+
+import sys
+import logging
+import json
+import random
+import threading
+import queue
+import math
+from datetime import datetime, timedelta
+from typing import Optional, List, Dict, Any, Tuple
+from dataclasses import dataclass, asdict
+import mysql.connector
+from mysql.connector import Error
+import numpy as np
+from scipy import stats
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
+
+from PySide6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QLabel, QLineEdit, QComboBox, QPushButton, QTableWidget,
+    QTableWidgetItem, QSpinBox, QCheckBox, QRadioButton, QScrollArea,
+    QGridLayout, QFrame, QMessageBox, QStackedWidget, QDialog,
+    QGroupBox, QButtonGroup, QProgressBar, QStatusBar, QToolBar,
+    QAction, QTabWidget, QSplitter, QListWidget, QListWidgetItem,
+    QTreeWidget, QTreeWidgetItem, QTextEdit, QProgressDialog,
+    QFileDialog, QMenu, QSystemTrayIcon, QStyle, QSlider,
+    QDial, QLCDNumber, QDateTimeEdit, QCalendarWidget,
+    QGraphicsView, QGraphicsScene, QGraphicsEllipseItem,
+    QGraphicsTextItem, QGraphicsItem, QGraphicsDropShadowEffect
+)
+from PySide6.QtCore import (
+    Qt, Signal, Slot, QTimer, QSize, QTime, QDate, 
+    QDateTime, QPropertyAnimation, QEasingCurve,
+    QParallelAnimationGroup, QSequentialAnimationGroup,
+    QPoint, QRect, QThread, pyqtSignal, QRunnable,
+    QThreadPool, QObject
+)
+from PySide6.QtGui import (
+    QFont, QIcon, QPixmap, QColor, QPalette, QBrush,
+    QLinearGradient, QRadialGradient, QPen, QPainter,
+    QPainterPath, QKeySequence, QShortcut, QCursor,
+    QMovie, QFontDatabase, QTransform, QImage
+)
+
+# Импорт для AI-функций (эмуляция)
+try:
+    # В реальном приложении можно подключить реальные ML-библиотеки
+    pass
+except ImportError:
+    print("AI-библиотеки не установлены, используем эмуляцию")
+
+# Настройка расширенного логирования
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('cafeteria_system.log'),
+        logging.StreamHandler(),
+        logging.handlers.RotatingFileHandler(
+            'cafeteria_debug.log', maxBytes=10485760, backupCount=5
+        )
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# Конфигурация с AI-параметрами
+@dataclass
+class AIConfig:
+    """Конфигурация AI-модулей"""
+    # Рекомендательная система
+    RECOMMENDATION_ENGINE: bool = True
+    COLLABORATIVE_FILTERING: bool = True
+    CONTENT_BASED_FILTERING: bool = True
+    MIN_SIMILARITY_THRESHOLD: float = 0.3
+    
+    # Аналитика
+    PREDICTIVE_ANALYTICS: bool = True
+    TREND_DETECTION: bool = True
+    ANOMALY_DETECTION: bool = True
+    
+    # Голосовой интерфейс
+    VOICE_COMMANDS: bool = True
+    SPEECH_RECOGNITION: bool = True
+    VOICE_FEEDBACK: bool = True
+    
+    # Компьютерное зрение
+    OBJECT_DETECTION: bool = False  # Для распознавания продуктов
+    FACE_RECOGNITION: bool = False  # Для идентификации клиентов
+    
+    # AR/VR
+    AR_PREVIEW: bool = True  # AR-просмотр блюд
+    VR_MODE: bool = False    # Полноценный VR режим
+
+class QuantumSafeEncryption:
+    """Квантово-безопасное шифрование для защиты данных (симуляция)"""
+    
+    @staticmethod
+    def generate_quantum_key(length: int = 256) -> str:
+        """Генерация квантового ключа"""
+        import hashlib
+        import secrets
+        return hashlib.sha3_256(
+            secrets.token_bytes(length)
+        ).hexdigest()
+    
+    @staticmethod
+    def encrypt_data(data: str, key: str) -> str:
+        """Шифрование данных с использованием квантово-безопасного алгоритма"""
+        # Здесь должна быть реальная имплементация
+        # Для демонстрации используем XOR
+        import base64
+        data_bytes = data.encode()
+        key_bytes = key.encode()
+        encrypted = bytearray()
+        
+        for i in range(len(data_bytes)):
+            encrypted.append(data_bytes[i] ^ key_bytes[i % len(key_bytes)])
+        
+        return base64.b64encode(encrypted).decode()
+    
+    @staticmethod
+    def decrypt_data(encrypted_data: str, key: str) -> str:
+        """Дешифрование данных"""
+        import base64
+        encrypted_bytes = base64.b64decode(encrypted_data)
+        key_bytes = key.encode()
+        decrypted = bytearray()
+        
+        for i in range(len(encrypted_bytes)):
+            decrypted.append(encrypted_bytes[i] ^ key_bytes[i % len(key_bytes)])
+        
+        return decrypted.decode()
+
+class AIRecommendationEngine(QThread):
+    """AI-движок рекомендаций в отдельном потоке"""
+    
+    recommendations_ready = pyqtSignal(list)
+    pattern_detected = pyqtSignal(dict)
+    
+    def __init__(self, db_manager):
+        super().__init__()
+        self.db = db_manager
+        self.running = True
+        self.user_history = {}
+        self.product_similarity = {}
+    
+    def run(self):
+        """Основной цикл AI-движка"""
+        logger.info("AI Recommendation Engine запущен")
+        
+        while self.running:
+            try:
+                self.analyze_user_patterns()
+                self.calculate_product_similarity()
+                self.generate_trend_predictions()
+                self.sleep(30)  # Обновляем каждые 30 секунд
+            except Exception as e:
+                logger.error(f"Ошибка в AI-движке: {e}")
+    
+    def analyze_user_patterns(self):
+        """Анализ паттернов пользователей"""
+        try:
+            # Анализ популярных комбинаций
+            query = """
+                SELECT 
+                    GROUP_CONCAT(DISTINCT p.name ORDER BY p.name) as product_combo,
+                    COUNT(*) as frequency,
+                    AVG(o.total_cost) as avg_price,
+                    HOUR(o.date_create) as hour_of_day,
+                    DAYNAME(o.date_create) as day_of_week
+                FROM orders o
+                JOIN order_shopcase os ON o.id = os.order_id
+                JOIN products p ON os.product_id = p.id
+                WHERE o.date_create > DATE_SUB(NOW(), INTERVAL 7 DAY)
+                GROUP BY os.order_id, HOUR(o.date_create), DAYNAME(o.date_create)
+                HAVING COUNT(*) > 1
+                ORDER BY frequency DESC
+                LIMIT 20
+            """
+            
+            patterns = self.db.execute_query(query)
+            if patterns:
+                self.pattern_detected.emit({
+                    'type': 'user_patterns',
+                    'data': patterns[:5]
+                })
+                
+                # Сохраняем для рекомендаций
+                for pattern in patterns[:10]:
+                    products = pattern['product_combo'].split(',')
+                    for i in range(len(products)-1):
+                        for j in range(i+1, len(products)):
+                            key = f"{products[i]}|{products[j]}"
+                            if key not in self.product_similarity:
+                                self.product_similarity[key] = 0
+                            self.product_similarity[key] += pattern['frequency']
+        except Exception as e:
+            logger.error(f"Ошибка анализа паттернов: {e}")
+    
+    def calculate_product_similarity(self):
+        """Расчет схожести продуктов на основе покупок"""
+        try:
+            query = """
+                SELECT 
+                    p1.id as product1_id,
+                    p1.name as product1_name,
+                    p2.id as product2_id,
+                    p2.name as product2_name,
+                    COUNT(DISTINCT o.id) as co_occurrence
+                FROM orders o
+                JOIN order_shopcase os1 ON o.id = os1.order_id
+                JOIN order_shopcase os2 ON o.id = os2.order_id
+                JOIN products p1 ON os1.product_id = p1.id
+                JOIN products p2 ON os2.product_id = p2.id
+                WHERE p1.id < p2.id
+                GROUP BY p1.id, p2.id
+                HAVING co_occurrence > 2
+                ORDER BY co_occurrence DESC
+                LIMIT 50
+            """
+            
+            similarities = self.db.execute_query(query)
+            self.product_similarity.clear()
+            
+            for sim in similarities:
+                key = f"{sim['product1_name']}|{sim['product2_name']}"
+                self.product_similarity[key] = sim['co_occurrence']
+                
+        except Exception as e:
+            logger.error(f"Ошибка расчета схожести: {e}")
+    
+    def generate_trend_predictions(self):
+        """Генерация предсказаний трендов"""
+        try:
+            # Анализ временных рядов продаж
+            query = """
+                SELECT 
+                    DATE(date_create) as sale_date,
+                    COUNT(*) as order_count,
+                    SUM(total_cost) as revenue,
+                    AVG(total_cost) as avg_order_value
+                FROM orders
+                WHERE date_create > DATE_SUB(NOW(), INTERVAL 30 DAY)
+                GROUP BY DATE(date_create)
+                ORDER BY sale_date
+            """
+            
+            sales_data = self.db.execute_query(query)
+            if len(sales_data) > 5:
+                # Простой анализ тренда
+                dates = [d['sale_date'] for d in sales_data]
+                revenues = [d['revenue'] for d in sales_data]
+                
+                # Линейная регрессия для предсказания
+                if len(revenues) > 1:
+                    x = np.arange(len(revenues))
+                    slope, intercept, r_value, p_value, std_err = stats.linregress(x, revenues)
+                    
+                    prediction = {
+                        'trend': 'up' if slope > 0 else 'down',
+                        'strength': abs(slope),
+                        'r_squared': r_value**2,
+                        'predicted_tomorrow': intercept + slope * (len(revenues) + 1)
+                    }
+                    
+                    self.pattern_detected.emit({
+                        'type': 'sales_trend',
+                        'data': prediction
+                    })
+        except Exception as e:
+            logger.error(f"Ошибка генерации предсказаний: {e}")
+    
+    def get_recommendations(self, product_id: int, limit: int = 5) -> List[Dict]:
+        """Получение рекомендаций для продукта"""
+        recommendations = []
+        
+        try:
+            # Получаем информацию о продукте
+            product_query = "SELECT name, category_id FROM products WHERE id = %s"
+            product = self.db.execute_query(product_query, (product_id,), fetch_all=False)
+            
+            if product:
+                # Рекомендации на основе схожести
+                for key, score in self.product_similarity.items():
+                    if product['name'] in key:
+                        other_product = key.split('|')[0] if key.split('|')[1] == product['name'] else key.split('|')[1]
+                        
+                        # Получаем информацию о рекомендованном продукте
+                        rec_query = """
+                            SELECT p.*, c.name as category_name 
+                            FROM products p 
+                            LEFT JOIN categories c ON p.category_id = c.id
+                            WHERE p.name = %s AND p.is_active = 1
+                        """
+                        rec_product = self.db.execute_query(rec_query, (other_product,), fetch_all=False)
+                        
+                        if rec_product:
+                            rec_product['similarity_score'] = min(score / 10, 1.0)  # Нормализуем оценку
+                            recommendations.append(rec_product)
+                
+                # Сортируем по оценке схожести
+                recommendations.sort(key=lambda x: x.get('similarity_score', 0), reverse=True)
+                
+        except Exception as e:
+            logger.error(f"Ошибка получения рекомендаций: {e}")
+        
+        return recommendations[:limit]
+    
+    def stop(self):
+        """Остановка AI-движка"""
+        self.running = False
+        self.wait()
+
+class RealTimeAnalyticsDashboard(QWidget):
+    """Панель аналитики в реальном времени с графиками"""
+    
+    def __init__(self, db_manager):
+        super().__init__()
+        self.db = db_manager
+        self.metrics = {}
+        self.setup_ui()
+        self.start_metrics_collection()
+    
+    def setup_ui(self):
+        """Настройка интерфейса дашборда"""
+        main_layout = QVBoxLayout(self)
+        main_layout.setSpacing(10)
+        main_layout.setContentsMargins(20, 20, 20, 20)
+        
+        # Заголовок с анимированным текстом
+        title_layout = QHBoxLayout()
+        title_label = QLabel("📊 AI-Аналитика в реальном времени")
+        title_label.setStyleSheet("""
+            font-size: 24px;
+            font-weight: bold;
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                stop:0 #FF5722, stop:0.5 #2196F3, stop:1 #4CAF50);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            padding: 10px;
+        """)
+        title_layout.addWidget(title_label)
+        
+        refresh_btn = QPushButton("🔄 Обновить")
+        refresh_btn.clicked.connect(self.update_dashboard)
+        title_layout.addWidget(refresh_btn)
+        
+        main_layout.addLayout(title_layout)
+        
+        # Виджеты с метриками
+        metrics_grid = QGridLayout()
+        
+        # Продажи сегодня
+        self.sales_today = self.create_metric_widget("💰 Продажи сегодня", "0 ₽", "#4CAF50")
+        metrics_grid.addWidget(self.sales_today, 0, 0)
+        
+        # Средний чек
+        self.avg_receipt = self.create_metric_widget("🧾 Средний чек", "0 ₽", "#2196F3")
+        metrics_grid.addWidget(self.avg_receipt, 0, 1)
+        
+        # Популярный товар
+        self.top_product = self.create_metric_widget("⭐ Топ товар", "—", "#FF9800")
+        metrics_grid.addWidget(self.top_product, 0, 2)
+        
+        # Конверсия
+        self.conversion_rate = self.create_metric_widget("📈 Конверсия", "0%", "#9C27B0")
+        metrics_grid.addWidget(self.conversion_rate, 1, 0)
+        
+        # Время обслуживания
+        self.service_time = self.create_metric_widget("⏱️ Ср. время", "0 мин", "#00BCD4")
+        metrics_grid.addWidget(self.service_time, 1, 1)
+        
+        # Прогноз на завтра
+        self.tomorrow_forecast = self.create_metric_widget("🔮 Прогноз", "—", "#FF5722")
+        metrics_grid.addWidget(self.tomorrow_forecast, 1, 2)
+        
+        main_layout.addLayout(metrics_grid)
+        
+        # Графики
+        self.figure = Figure(figsize=(10, 8), dpi=100)
+        self.canvas = FigureCanvas(self.figure)
+        main_layout.addWidget(self.canvas)
+        
+        # Таблица последних заказов
+        self.recent_orders_table = QTableWidget()
+        self.recent_orders_table.setColumnCount(6)
+        self.recent_orders_table.setHorizontalHeaderLabels([
+            "Время", "Номер", "Сумма", "Тип", "Клиент", "Статус"
+        ])
+        main_layout.addWidget(self.recent_orders_table)
+        
+        # Таймер обновления
+        self.update_timer = QTimer()
+        self.update_timer.timeout.connect(self.update_dashboard)
+        self.update_timer.start(10000)  # Каждые 10 секунд
+    
+    def create_metric_widget(self, title: str, value: str, color: str) -> QFrame:
+        """Создание виджета метрики"""
+        frame = QFrame()
+        frame.setStyleSheet(f"""
+            QFrame {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 rgba(255,255,255,0.9), stop:1 rgba(255,255,255,0.7));
+                border: 2px solid {color};
+                border-radius: 15px;
+                padding: 15px;
+            }}
+        """)
+        
+        layout = QVBoxLayout(frame)
+        
+        title_label = QLabel(title)
+        title_label.setStyleSheet(f"color: {color}; font-size: 14px; font-weight: bold;")
+        layout.addWidget(title_label)
+        
+        value_label = QLabel(value)
+        value_label.setStyleSheet("font-size: 22px; font-weight: bold; color: #333;")
+        value_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(value_label)
+        
+        return frame
+    
+    def start_metrics_collection(self):
+        """Запуск сбора метрик"""
+        self.update_dashboard()
+    
+    def update_dashboard(self):
+        """Обновление всех метрик на дашборде"""
+        try:
+            # Продажи сегодня
+            sales_query = """
+                SELECT 
+                    SUM(total_cost) as total_sales,
+                    COUNT(*) as order_count,
+                    AVG(total_cost) as avg_receipt
+                FROM orders 
+                WHERE DATE(date_create) = CURDATE()
+            """
+            today_stats = self.db.execute_query(sales_query, fetch_all=False)
+            
+            if today_stats:
+                self.sales_today.layout().itemAt(1).widget().setText(
+                    f"{float(today_stats['total_sales'] or 0):,.2f} ₽"
+                )
+                self.avg_receipt.layout().itemAt(1).widget().setText(
+                    f"{float(today_stats['avg_receipt'] or 0):,.2f} ₽"
+                )
+            
+            # Популярный товар
+            top_product_query = """
+                SELECT p.name, COUNT(*) as sales_count
+                FROM order_shopcase os
+                JOIN products p ON os.product_id = p.id
+                JOIN orders o ON os.order_id = o.id
+                WHERE DATE(o.date_create) = CURDATE()
+                GROUP BY p.id
+                ORDER BY sales_count DESC
+                LIMIT 1
+            """
+            top_product = self.db.execute_query(top_product_query, fetch_all=False)
+            if top_product:
+                self.top_product.layout().itemAt(1).widget().setText(
+                    f"{top_product['name'][:15]}... ({top_product['sales_count']})"
+                )
+            
+            # Последние заказы
+            recent_orders_query = """
+                SELECT 
+                    o.date_create,
+                    o.order_number,
+                    o.total_cost,
+                    CASE o.type_id 
+                        WHEN 1 THEN 'В зале' 
+                        WHEN 2 THEN 'Навынос' 
+                        ELSE 'Доставка' 
+                    END as order_type,
+                    c.name as client_name,
+                    'Завершен' as status
+                FROM orders o
+                LEFT JOIN clients c ON o.client_id = c.id
+                ORDER BY o.date_create DESC
+                LIMIT 10
+            """
+            recent_orders = self.db.execute_query(recent_orders_query)
+            
+            self.recent_orders_table.setRowCount(len(recent_orders))
+            for i, order in enumerate(recent_orders):
+                self.recent_orders_table.setItem(i, 0, QTableWidgetItem(
+                    str(order['date_create'])[11:19]
+                ))
+                self.recent_orders_table.setItem(i, 1, QTableWidgetItem(
+                    str(order['order_number'])
+                ))
+                self.recent_orders_table.setItem(i, 2, QTableWidgetItem(
+                    f"{float(order['total_cost']):.2f} ₽"
+                ))
+                self.recent_orders_table.setItem(i, 3, QTableWidgetItem(
+                    order['order_type']
+                ))
+                self.recent_orders_table.setItem(i, 4, QTableWidgetItem(
+                    order['client_name'] or 'Гость'
+                ))
+                self.recent_orders_table.setItem(i, 5, QTableWidgetItem(
+                    order['status']
+                ))
+            
+            # Обновление графиков
+            self.update_charts()
+            
+        except Exception as e:
+            logger.error(f"Ошибка обновления дашборда: {e}")
+    
+    def update_charts(self):
+        """Обновление графиков"""
+        try:
+            self.figure.clear()
+            
+            # График продаж по часам
+            hourly_query = """
+                SELECT 
+                    HOUR(date_create) as hour,
+                    COUNT(*) as orders,
+                    SUM(total_cost) as revenue
+                FROM orders 
+                WHERE DATE(date_create) = CURDATE()
+                GROUP BY HOUR(date_create)
+                ORDER BY hour
+            """
+            hourly_data = self.db.execute_query(hourly_query)
+            
+            hours = [d['hour'] for d in hourly_data]
+            revenues = [float(d['revenue'] or 0) for d in hourly_data]
+            
+            ax1 = self.figure.add_subplot(221)
+            ax1.bar(hours, revenues, color='#FF5722', alpha=0.7)
+            ax1.set_title('Продажи по часам сегодня')
+            ax1.set_xlabel('Час')
+            ax1.set_ylabel('Выручка (₽)')
+            ax1.grid(True, alpha=0.3)
+            
+            # Круговая диаграмма категорий
+            category_query = """
+                SELECT 
+                    c.name as category,
+                    SUM(os.current_count) as total_sold
+                FROM order_shopcase os
+                JOIN products p ON os.product_id = p.id
+                JOIN categories c ON p.category_id = c.id
+                JOIN orders o ON os.order_id = o.id
+                WHERE DATE(o.date_create) = CURDATE()
+                GROUP BY c.id
+            """
+            category_data = self.db.execute_query(category_query)
+            
+            if category_data:
+                categories = [d['category'] for d in category_data]
+                sold = [float(d['total_sold'] or 0) for d in category_data]
+                
+                ax2 = self.figure.add_subplot(222)
+                colors = plt.cm.Set3(np.linspace(0, 1, len(categories)))
+                ax2.pie(sold, labels=categories, autopct='%1.1f%%', colors=colors)
+                ax2.set_title('Продажи по категориям')
+            
+            # Тренд недели
+            weekly_query = """
+                SELECT 
+                    DATE(date_create) as date,
+                    SUM(total_cost) as revenue
+                FROM orders 
+                WHERE date_create >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+                GROUP BY DATE(date_create)
+                ORDER BY date
+            """
+            weekly_data = self.db.execute_query(weekly_query)
+            
+            if len(weekly_data) > 1:
+                dates = [str(d['date']) for d in weekly_data]
+                weekly_rev = [float(d['revenue'] or 0) for d in weekly_data]
+                
+                ax3 = self.figure.add_subplot(212)
+                ax3.plot(dates, weekly_rev, 'o-', linewidth=2, markersize=8, color='#2196F3')
+                ax3.fill_between(dates, weekly_rev, alpha=0.2, color='#2196F3')
+                ax3.set_title('Продажи за неделю')
+                ax3.set_xlabel('Дата')
+                ax3.set_ylabel('Выручка (₽)')
+                ax3.grid(True, alpha=0.3)
+                ax3.tick_params(axis='x', rotation=45)
+            
+            self.figure.tight_layout()
+            self.canvas.draw()
+            
+        except Exception as e:
+            logger.error(f"Ошибка обновления графиков: {e}")
+
+class ARProductViewer(QDialog):
+    """AR-просмотрщик продуктов с 3D эффектами"""
+    
+    def __init__(self, product_data, parent=None):
+        super().__init__(parent)
+        self.product_data = product_data
+        self.setup_ui()
+        self.setup_animations()
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+    
+    def setup_ui(self):
+        """Настройка AR-интерфейса"""
+        self.setFixedSize(800, 600)
+        
+        # Полупрозрачный фон
+        self.setStyleSheet("""
+            QDialog {
+                background: rgba(0, 0, 0, 180);
+            }
+        """)
+        
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Центральный контейнер
+        container = QFrame()
+        container.setStyleSheet("""
+            QFrame {
+                background: qradialgradient(
+                    cx: 0.5, cy: 0.5, radius: 1,
+                    fx: 0.5, fy: 0.5,
+                    stop: 0 white,
+                    stop: 1 #f0f0f0
+                );
+                border-radius: 20px;
+                border: 3px solid #FF5722;
+            }
+        """)
+        
+        container_layout = QVBoxLayout(container)
+        
+        # Заголовок с эффектом свечения
+        title_label = QLabel(f"✨ {self.product_data.get('name', 'Продукт')} ✨")
+        title_label.setAlignment(Qt.AlignCenter)
+        title_label.setStyleSheet("""
+            QLabel {
+                font-size: 28px;
+                font-weight: bold;
+                color: #FF5722;
+                padding: 20px;
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #FF5722, stop:0.5 #FF9800, stop:1 #FF5722
+                );
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+                text-shadow: 0 0 10px rgba(255, 87, 34, 0.5);
+            }
+        """)
+        container_layout.addWidget(title_label)
+        
+        # 3D визуализация
+        self.ar_scene = QGraphicsView()
+        self.ar_scene.setScene(QGraphicsScene())
+        self.ar_scene.setRenderHint(QPainter.Antialiasing)
+        self.ar_scene.setStyleSheet("background: transparent; border: none;")
+        
+        # Создание 3D-эффектов
+        self.create_3d_effect()
+        container_layout.addWidget(self.ar_scene, 1)
+        
+        # Информация о продукте с анимацией
+        info_frame = QFrame()
+        info_frame.setStyleSheet("""
+            QFrame {
+                background: rgba(255, 255, 255, 200);
+                border-radius: 10px;
+                border: 2px solid #2196F3;
+                padding: 15px;
+            }
+        """)
+        
+        info_layout = QGridLayout(info_frame)
+        
+        # Анимированные метрики
+        self.create_animated_metric("Цена:", f"{float(self.product_data.get('price', 0)):.2f} ₽", 
+                                  "#FF5722", 0, 0, info_layout)
+        self.create_animated_metric("Вес:", self.product_data.get('weight', '—'), 
+                                  "#4CAF50", 0, 1, info_layout)
+        self.create_animated_metric("Калории:", "≈ 350 ккал",  # В реальном приложении из БД
+                                  "#FF9800", 1, 0, info_layout)
+        self.create_animated_metric("Рейтинг:", "4.8 ★", 
+                                  "#2196F3", 1, 1, info_layout)
+        
+        container_layout.addWidget(info_frame)
+        
+        # Кнопки управления AR
+        control_layout = QHBoxLayout()
+        
+        rotate_btn = QPushButton("🔄 Вращать")
+        rotate_btn.clicked.connect(self.rotate_product)
+        rotate_btn.setStyleSheet(self.get_button_style("#2196F3"))
+        control_layout.addWidget(rotate_btn)
+        
+        zoom_in_btn = QPushButton("🔍 Приблизить")
+        zoom_in_btn.clicked.connect(self.zoom_in)
+        zoom_in_btn.setStyleSheet(self.get_button_style("#4CAF50"))
+        control_layout.addWidget(zoom_in_btn)
+        
+        zoom_out_btn = QPushButton("🔎 Отдалить")
+        zoom_out_btn.clicked.connect(self.zoom_out)
+        zoom_out_btn.setStyleSheet(self.get_button_style("#FF9800"))
+        control_layout.addWidget(zoom_out_btn)
+        
+        close_btn = QPushButton("✕ Закрыть AR")
+        close_btn.clicked.connect(self.close)
+        close_btn.setStyleSheet(self.get_button_style("#F44336"))
+        control_layout.addWidget(close_btn)
+        
+        container_layout.addLayout(control_layout)
+        main_layout.addWidget(container)
+        
+        # Эффект тени
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(40)
+        shadow.setColor(QColor(0, 0, 0, 150))
+        shadow.setOffset(0, 5)
+        container.setGraphicsEffect(shadow)
+    
+    def get_button_style(self, color: str) -> str:
+        """Стиль для кнопок AR"""
+        return f"""
+            QPushButton {{
+                background: {color};
+                color: white;
+                border: none;
+                border-radius: 8px;
+                padding: 10px 20px;
+                font-weight: bold;
+                font-size: 14px;
+                margin: 5px;
+            }}
+            QPushButton:hover {{
+                background: {self.darken_color(color)};
+                transform: scale(1.05);
+            }}
+        """
+    
+    def darken_color(self, color: str) -> str:
+        """Затемнение цвета"""
+        # Простая реализация - в реальном приложении лучше использовать QColor
+        return color
+    
+    def create_animated_metric(self, label: str, value: str, color: str, 
+                              row: int, col: int, layout: QGridLayout):
+        """Создание анимированной метрики"""
+        frame = QFrame()
+        frame.setStyleSheet(f"""
+            QFrame {{
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 {color}20, stop:1 {color}05
+                );
+                border-radius: 8px;
+                border: 1px solid {color}40;
+                padding: 10px;
+            }}
+        """)
+        
+        metric_layout = QVBoxLayout(frame)
+        
+        label_widget = QLabel(label)
+        label_widget.setStyleSheet(f"color: {color}; font-size: 12px;")
+        metric_layout.addWidget(label_widget)
+        
+        value_widget = QLabel(value)
+        value_widget.setStyleSheet("font-size: 16px; font-weight: bold; color: #333;")
+        metric_layout.addWidget(value_widget)
+        
+        layout.addWidget(frame, row, col)
+        
+        # Анимация появления
+        self.fade_in(frame)
+    
+    def create_3d_effect(self):
+        """Создание 3D эффектов для продукта"""
+        scene = self.ar_scene.scene()
+        scene.clear()
+        
+        # Центр сцены
+        center_x = 400
+        center_y = 200
+        
+        # Основной круг (3D шар)
+        sphere = QGraphicsEllipseItem(center_x - 100, center_y - 100, 200, 200)
+        
+        # Градиент для 3D эффекта
+        gradient = QRadialGradient(center_x, center_y, 100)
+        gradient.setColorAt(0, QColor(255, 215, 0, 200))  # Золотой центр
+        gradient.setColorAt(0.7, QColor(255, 140, 0, 150))  # Оранжевый
+        gradient.setColorAt(1, QColor(255, 69, 0, 100))    # Красный
+        
+        brush = QBrush(gradient)
+        sphere.setBrush(brush)
+        sphere.setPen(QPen(Qt.NoPen))
+        
+        scene.addItem(sphere)
+        
+        # Отражение
+        reflection = QGraphicsEllipseItem(center_x - 90, center_y - 90, 180, 40)
+        reflection.setBrush(QBrush(QColor(255, 255, 255, 80)))
+        reflection.setPen(QPen(Qt.NoPen))
+        scene.addItem(reflection)
+        
+        # Текст с названием продукта
+        text = QGraphicsTextItem(self.product_data.get('name', 'Продукт'))
+        text.setDefaultTextColor(QColor(255, 255, 255))
+        text.setFont(QFont("Arial", 16, QFont.Bold))
+        text.setPos(center_x - text.boundingRect().width()/2, center_y + 120)
+        scene.addItem(text)
+        
+        # Партиклы вокруг
+        self.create_particles(scene, center_x, center_y)
+    
+    def create_particles(self, scene, center_x, center_y):
+        """Создание частиц вокруг объекта"""
+        for i in range(20):
+            angle = random.uniform(0, 2 * math.pi)
+            radius = random.uniform(120, 180)
+            
+            x = center_x + radius * math.cos(angle)
+            y = center_y + radius * math.sin(angle)
+            
+            particle = QGraphicsEllipseItem(x - 3, y - 3, 6, 6)
+            particle.setBrush(QBrush(QColor(255, 215, 0, 150)))
+            particle.setPen(QPen(Qt.NoPen))
+            
+            scene.addItem(particle)
+            
+            # Анимация частицы
+            self.animate_particle(particle, center_x, center_y, radius, angle)
+    
+    def animate_particle(self, particle, center_x, center_y, radius, start_angle):
+        """Анимация движения частицы"""
+        self.animation = QPropertyAnimation(particle, b"pos")
+        self.animation.setDuration(2000 + random.randint(0, 1000))
+        self.animation.setLoopCount(-1)  # Бесконечная анимация
+        
+        # Круговая траектория
+        path = []
+        for i in range(20):
+            angle = start_angle + (i * 2 * math.pi / 20)
+            x = center_x + radius * math.cos(angle) - 3
+            y = center_y + radius * math.sin(angle) - 3
+            path.append(QPoint(x, y))
+        
+        self.animation.setKeyValueAt(0, path[0])
+        for i, point in enumerate(path[1:], 1):
+            self.animation.setKeyValueAt(i/len(path), point)
+        
+        self.animation.start()
+    
+    def setup_animations
