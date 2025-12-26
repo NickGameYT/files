@@ -1,0 +1,1294 @@
+#С бд
+# -*- coding: utf-8 -*-
+import sys
+import os
+import mysql.connector
+from mysql.connector import Error
+from PySide6.QtWidgets import (QApplication, QMainWindow, QDialog, QMessageBox, QTableWidgetItem,
+    QPushButton, QSpinBox, QVBoxLayout, QLabel, QFrame, QHBoxLayout, QStackedWidget, QWidget, QTableWidget)
+from PySide6.QtCore import Qt, QFile
+from PySide6.QtGui import QIcon
+from PySide6.QtUiTools import QUiLoader
+
+def check_ui_file(ui_file):
+    if not os.path.exists(ui_file):
+        raise FileNotFoundError(f"UI file '{ui_file}' not found!")
+
+def load_ui(ui_file, parent=None):
+    loader = QUiLoader()
+    file_in = QFile(ui_file)
+    file_in.open(QFile.ReadOnly)
+    widget = loader.load(file_in, parent)
+    file_in.close()
+    return widget
+
+def format_price(value):
+    return f"{value:.2f}".replace('.', ',')
+
+class LoginDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Авторизация")
+        check_ui_file('ui_login_dialog.ui')
+        self.ui_widget = load_ui('ui_login_dialog.ui', self)
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.ui_widget)
+        self.ui_widget.btn_login.clicked.connect(self.login)
+        self.ui_widget.line_password.returnPressed.connect(self.login)
+        self.ui_widget.label_status.setText("Введите логин и пароль")
+
+    def login(self):
+        username = self.ui_widget.line_username.text().strip()
+        password = self.ui_widget.line_password.text().strip()
+        if not username or not password:
+            self.ui_widget.label_status.setText("Введите логин и пароль!")
+            return
+        try:
+            conn = mysql.connector.connect(host="localhost", user="root", password="dbpass123456", database="chill_coffee")
+            cursor = conn.cursor()
+            cursor.execute("SELECT id FROM users WHERE username = %s AND password = %s", (username, password))
+            if cursor.fetchone():
+                self.accept()
+                self.ui_widget.label_status.setText("Успешный вход!")
+            else:
+                self.ui_widget.label_status.setText("Неверный логин/пароль!")
+            cursor.close()
+            conn.close()
+        except Error as e:
+            QMessageBox.critical(self, "DB Error", str(e))
+
+class OrdersViewWidget(QWidget):
+    def __init__(self, connection, main_window=None):
+        super().__init__()
+        self.connection = connection
+        self.main_window = main_window
+        layout = QVBoxLayout(self)
+        title = QLabel("Список заказов")
+        title.setStyleSheet("font-weight: bold; font-size: 16px; margin-bottom: 10px;")
+        layout.addWidget(title)
+        self.table_orders = QTableWidget()
+        self.table_orders.setColumnCount(5)
+        self.table_orders.setHorizontalHeaderLabels(["ID", "Клиент", "Сумма", "Дата", "Статус"])
+        layout.addWidget(self.table_orders)
+        btn_back = QPushButton("Вернуться к оформлению заказа")
+        btn_back.clicked.connect(lambda: main_window.show_order_module() if main_window else None)
+        layout.addWidget(btn_back)
+        self.load_orders()
+
+    def load_orders(self):
+        self.table_orders.setRowCount(0)
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute("SELECT o.id, COALESCE(c.name, 'Без клиента'), o.total, o.`date`, COALESCE(o.status, 'Оформлен') FROM orders o LEFT JOIN clients c ON o.client_id = c.id ORDER BY o.`date` DESC LIMIT 100")
+            for row, order in enumerate(cursor.fetchall()):
+                self.table_orders.insertRow(row)
+                for col, val in enumerate(order):
+                    self.table_orders.setItem(row, col, QTableWidgetItem(str(val)))
+            cursor.close()
+        except Error as e:
+            self.table_orders.setRowCount(1)
+            self.table_orders.setItem(0, 0, QTableWidgetItem(f"Ошибка загрузки заказов: {str(e)}"))
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        check_ui_file('form.ui')
+        self.ui_widget = load_ui('form.ui', self)
+        self.stacked_widget = QStackedWidget()
+        self.stacked_widget.addWidget(self.ui_widget)
+        self.connection = None
+        self.connect_db()
+        self.orders_widget = OrdersViewWidget(self.connection, main_window=self)
+        self.stacked_widget.addWidget(self.orders_widget)
+        self.setCentralWidget(self.stacked_widget)
+        self.setWindowTitle("Система управления заказами")
+        self.resize(1200, 900)
+        self.setMinimumSize(1000, 700)
+        self.cart = {}
+        self.all_items = []
+        self.setup_connections()
+        self.setup_tables()
+        self.load_data()
+
+    def connect_db(self):
+        try:
+            self.connection = mysql.connector.connect(host="localhost", user="root", password="dbpass123456", database="chill_coffee")
+            if self.connection.is_connected():
+                print("[OK] DB connected")
+        except Error as e:
+            QMessageBox.critical(self, "DB Error", str(e))
+            sys.exit(1)
+
+    def setup_connections(self):
+        self.ui_widget.line_search.textChanged.connect(self.apply_filters)
+        self.ui_widget.combo_category.currentIndexChanged.connect(self.apply_filters)
+        for radio in [self.ui_widget.radio_sort_none, self.ui_widget.radio_sort_asc, self.ui_widget.radio_sort_desc]:
+            radio.toggled.connect(self.apply_filters)
+        self.ui_widget.btn_create_order.clicked.connect(self.create_order)
+        self.ui_widget.check_no_client.stateChanged.connect(lambda: self.ui_widget.combo_client.setEnabled(not self.ui_widget.check_no_client.isChecked()))
+        self.ui_widget.combo_client.setEnabled(True)
+
+    def setup_tables(self):
+        widths = [200, 100, 80, 100, 120]
+        for i, w in enumerate(widths):
+            self.ui_widget.table_cart.setColumnWidth(i, w)
+        self.ui_widget.table_cart.setHorizontalHeaderLabels(["Наименование", "Цена, руб.", "Кол-во", "Стоимость", "Действие"])
+
+    def load_data(self):
+        cursor = self.connection.cursor()
+        self.ui_widget.combo_category.clear()
+        self.ui_widget.combo_category.addItem("Любая категория", None)
+        cursor.execute("SELECT id, name FROM categories ORDER BY name")
+        for cid, name in cursor.fetchall():
+            self.ui_widget.combo_category.addItem(name, cid)
+        self.ui_widget.combo_client.clear()
+        cursor.execute("SELECT id, name FROM clients ORDER BY name")
+        for cid, name in cursor.fetchall():
+            self.ui_widget.combo_client.addItem(name, cid)
+        cursor.execute("SELECT m.id, m.name, c.name, m.price, m.description, m.category_id FROM menu_items m JOIN categories c ON m.category_id = c.id WHERE m.is_available = 1")
+        self.all_items = cursor.fetchall()
+        cursor.close()
+        self.apply_filters()
+
+    def apply_filters(self):
+        search = self.ui_widget.line_search.text().lower()
+        cat_id = self.ui_widget.combo_category.currentData()
+        items = [item for item in self.all_items if (not cat_id or item[5] == cat_id) and (not search or search in f"{item[1]} {item[2]} {item[4]}".lower())]
+        if self.ui_widget.radio_sort_asc.isChecked():
+            items.sort(key=lambda x: x[3])
+        elif self.ui_widget.radio_sort_desc.isChecked():
+            items.sort(key=lambda x: x[3], reverse=True)
+        self.display_menu(items)
+
+    def create_product_card(self, item):
+        card = load_ui('ui_product_card.ui') or QFrame()
+        if not isinstance(card, QFrame):
+            card = QFrame()
+        card.setFixedSize(200, 320)
+        iid, name, _, price, description, _ = item
+        if hasattr(card, 'label_name'):
+            card.label_name.setText(name)
+        if hasattr(card, 'label_description'):
+            card.label_description.setText(description or "Описание позиции")
+        if hasattr(card, 'label_price_value'):
+            card.label_price_value.setText(f"{float(price):.2f}")
+        card.item_data = item
+        if hasattr(card, 'btn_description'):
+            card.btn_description.clicked.connect(lambda: self.show_item_details_from_card(item))
+        if hasattr(card, 'btn_add'):
+            card.btn_add.clicked.connect(lambda: self.add_to_cart(item))
+        return card
+
+    def display_menu(self, items):
+        layout = self.ui_widget.scrollAreaWidgetContents_menu.layout()
+        while layout.count():
+            child = layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+        for idx, item in enumerate(items):
+            card = self.create_product_card(item)
+            layout.addWidget(card, idx // 4, idx % 4, Qt.AlignmentFlag.AlignTop)
+
+    def add_to_cart(self, item):
+        iid, name, _, price, _, _ = item
+        self.cart.setdefault(iid, {"name": name, "price": float(price), "qty": 0})
+        self.cart[iid]["qty"] += 1
+        self.update_cart()
+
+    def update_cart(self):
+        self.ui_widget.table_cart.setRowCount(0)
+        total = 0.0
+        for iid, d in self.cart.items():
+            row = self.ui_widget.table_cart.rowCount()
+            self.ui_widget.table_cart.insertRow(row)
+            self.ui_widget.table_cart.setItem(row, 0, QTableWidgetItem(d["name"]))
+            self.ui_widget.table_cart.setItem(row, 1, QTableWidgetItem(format_price(d['price'])))
+            spin = QSpinBox()
+            spin.setMinimum(1)
+            spin.setValue(d["qty"])
+            spin.valueChanged.connect(lambda v, i=iid: self.set_qty(i, v))
+            self.ui_widget.table_cart.setCellWidget(row, 2, spin)
+            s = d["price"] * d["qty"]
+            total += s
+            self.ui_widget.table_cart.setItem(row, 3, QTableWidgetItem(format_price(s)))
+            btn = QPushButton("Исключить")
+            btn.clicked.connect(lambda _, i=iid: self.remove_from_cart(i))
+            self.ui_widget.table_cart.setCellWidget(row, 4, btn)
+        self.ui_widget.label_total.setText(f"Стоимость корзины: {format_price(total)} руб.")
+
+    def set_qty(self, iid, val):
+        if val <= 0:
+            self.remove_from_cart(iid)
+        else:
+            self.cart[iid]["qty"] = val
+            self.update_cart()
+
+    def remove_from_cart(self, iid):
+        self.cart.pop(iid, None)
+        self.update_cart()
+
+    def create_order(self):
+        if not self.cart:
+            QMessageBox.warning(self, "Предупреждение", "Корзина пуста! Добавьте товары.")
+            return
+        client_id = self.ui_widget.combo_client.currentData() if not self.ui_widget.check_no_client.isChecked() else None
+        total = sum(d["price"] * d["qty"] for d in self.cart.values())
+        total_str = format_price(total)
+        client_name = "Без клиента" if client_id is None else self.ui_widget.combo_client.currentText()
+        items_count = sum(d["qty"] for d in self.cart.values())
+        reply = QMessageBox.question(self, "Подтверждение заказа", f"Вы уверены, что хотите оформить заказ?\n\nКлиент: {client_name}\nКоличество позиций: {items_count}\nОбщая сумма: {total_str} руб.", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute("INSERT INTO orders (client_id, total, `date`) VALUES (%s, %s, NOW())", (client_id, total))
+            order_id = cursor.lastrowid
+            for iid, d in self.cart.items():
+                cursor.execute("INSERT INTO order_items (order_id, item_id, qty, price) VALUES (%s, %s, %s, %s)", (order_id, iid, d["qty"], d["price"]))
+            self.connection.commit()
+            cursor.close()
+            QMessageBox.information(self, "Заказ оформлен", f"Заказ успешно создан!\n\nНомер заказа: {order_id}\nКлиент: {client_name}\nСумма: {total_str} руб.\n\nКорзина очищена.")
+            self.reset_state()
+            self.show_orders_module()
+        except Error as e:
+            cursor.close()
+            QMessageBox.information(self, "Заказ оформлен", f"Заказ создан на сумму {total_str} руб. ({client_name}).\n\nОшибка БД: {str(e)}")
+            self.reset_state()
+            self.show_orders_module()
+
+    def reset_state(self):
+        self.cart.clear()
+        self.update_cart()
+        self.ui_widget.line_search.clear()
+        self.ui_widget.combo_category.setCurrentIndex(0)
+        self.ui_widget.radio_sort_none.setChecked(True)
+        self.ui_widget.check_no_client.setChecked(False)
+        self.ui_widget.combo_client.setCurrentIndex(0)
+        if hasattr(self.ui_widget, 'combo_payment_type'):
+            self.ui_widget.combo_payment_type.setCurrentIndex(0)
+        if hasattr(self.ui_widget, 'radio_delivery_takeaway'):
+            self.ui_widget.radio_delivery_takeaway.setChecked(True)
+
+    def show_orders_module(self):
+        self.stacked_widget.setCurrentIndex(1)
+        self.orders_widget.load_orders()
+
+    def show_order_module(self):
+        self.stacked_widget.setCurrentIndex(0)
+
+    def show_item_details_from_card(self, item):
+        iid, name, _, _, description, _ = item
+        cursor = self.connection.cursor()
+        cursor.execute("SELECT name, description FROM menu_items WHERE id = %s", (iid,))
+        result = cursor.fetchone()
+        name, description = result if result else (name, description or "Описание отсутствует")
+        cursor.close()
+        dlg = ItemDetailsDialog(name, description, self)
+        dlg.exec()
+
+    def closeEvent(self, e):
+        if self.connection:
+            self.connection.close()
+        e.accept()
+
+class ItemDetailsDialog(QDialog):
+    def __init__(self, name, description, parent=None):
+        super().__init__(parent)
+        check_ui_file('ui_item_details.ui')
+        self.ui_widget = load_ui('ui_item_details.ui', self)
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.ui_widget)
+        self.ui_widget.label_item_name.setText(f"Товар: {name}")
+        self.ui_widget.text_description.setPlainText(description or "Описание отсутствует.")
+        self.ui_widget.btn_close.clicked.connect(self.accept)
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    app.setStyle("Fusion")
+    if os.path.exists('icon.png'):
+        app.setWindowIcon(QIcon('icon.png'))
+    login = LoginDialog()
+    if login.exec() != QDialog.Accepted:
+        print("Авторизация отменена.")
+        sys.exit(0)
+    w = MainWindow()
+    w.setWindowIcon(QIcon('icon.png') if os.path.exists('icon.png') else QIcon())
+    w.show()
+    sys.exit(app.exec())
+
+
+
+
+
+
+#Без базы данных
+'''
+import sys
+import os
+from datetime import datetime
+import mysql.connector
+from mysql.connector import Error
+from PySide6.QtWidgets import (QApplication, QMainWindow, QDialog, QMessageBox, QTableWidgetItem,
+    QPushButton, QSpinBox, QVBoxLayout, QLabel, QFrame, QHBoxLayout, QStackedWidget, QWidget, QTableWidget)
+from PySide6.QtCore import Qt, QFile
+from PySide6.QtGui import QIcon
+from PySide6.QtUiTools import QUiLoader
+
+def check_ui_file(ui_file):
+    if not os.path.exists(ui_file):
+        raise FileNotFoundError(f"UI file '{ui_file}' not found!")
+
+def load_ui(ui_file, parent=None):
+    loader = QUiLoader()
+    file_in = QFile(ui_file)
+    file_in.open(QFile.ReadOnly)
+    widget = loader.load(file_in, parent)
+    file_in.close()
+    return widget
+
+def format_price(value):
+    return f"{value:.2f}".replace('.', ',')
+
+class LoginDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Авторизация")
+        check_ui_file('ui_login_dialog.ui')
+        self.ui_widget = load_ui('ui_login_dialog.ui', self)
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.ui_widget)
+        self.ui_widget.btn_login.clicked.connect(self.login)
+        self.ui_widget.line_password.returnPressed.connect(self.login)
+        self.ui_widget.label_status.setText("Введите логин и пароль")
+        self.users = [{'id': 1, 'username': 'admin', 'password': 'admin123'}, {'id': 2, 'username': 'user', 'password': 'user123'}]
+        try:
+            conn = mysql.connector.connect(host="localhost", user="root", password="dbpass123456", database="chill_coffee")
+            conn.close()
+            print("[OK] DB connection test successful (not used)")
+        except Error as e:
+            print(f"[INFO] DB connection test failed (not used): {e}")
+
+    def login(self):
+        username = self.ui_widget.line_username.text().strip()
+        password = self.ui_widget.line_password.text().strip()
+        if not username or not password:
+            self.ui_widget.label_status.setText("Введите логин и пароль!")
+            return
+        for user in self.users:
+            if user['username'] == username and user['password'] == password:
+                self.accept()
+                self.ui_widget.label_status.setText("Успешный вход!")
+                return
+        self.ui_widget.label_status.setText("Неверный логин/пароль!")
+
+class OrdersViewWidget(QWidget):
+    def __init__(self, orders_data, clients_data, main_window=None):
+        super().__init__()
+        self.orders_data = orders_data
+        self.clients_data = clients_data
+        self.main_window = main_window
+        layout = QVBoxLayout(self)
+        title = QLabel("Список заказов")
+        title.setStyleSheet("font-weight: bold; font-size: 16px; margin-bottom: 10px;")
+        layout.addWidget(title)
+        self.table_orders = QTableWidget()
+        self.table_orders.setColumnCount(5)
+        self.table_orders.setHorizontalHeaderLabels(["ID", "Клиент", "Сумма", "Дата", "Статус"])
+        layout.addWidget(self.table_orders)
+        btn_back = QPushButton("Вернуться к оформлению заказа")
+        btn_back.clicked.connect(lambda: main_window.show_order_module() if main_window else None)
+        layout.addWidget(btn_back)
+        self.load_orders()
+
+    def load_orders(self):
+        self.table_orders.setRowCount(0)
+        if not self.orders_data:
+            self.table_orders.setRowCount(1)
+            self.table_orders.setItem(0, 0, QTableWidgetItem("Нет заказов"))
+            return
+        sorted_orders = sorted(self.orders_data, key=lambda x: x['date'], reverse=True)
+        for row, order in enumerate(sorted_orders[:100]):
+            self.table_orders.insertRow(row)
+            client_name = 'Без клиента'
+            if order['client_id']:
+                for client in self.clients_data:
+                    if client['id'] == order['client_id']:
+                        client_name = client['name']
+                        break
+            self.table_orders.setItem(row, 0, QTableWidgetItem(str(order['id'])))
+            self.table_orders.setItem(row, 1, QTableWidgetItem(client_name))
+            self.table_orders.setItem(row, 2, QTableWidgetItem(format_price(order['total'])))
+            self.table_orders.setItem(row, 3, QTableWidgetItem(str(order['date'])))
+            self.table_orders.setItem(row, 4, QTableWidgetItem(order.get('status', 'Оформлен')))
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        check_ui_file('form.ui')
+        self.ui_widget = load_ui('form.ui', self)
+        self.stacked_widget = QStackedWidget()
+        self.stacked_widget.addWidget(self.ui_widget)
+        try:
+            conn = mysql.connector.connect(host="localhost", user="root", password="dbpass123456", database="chill_coffee")
+            conn.close()
+            print("[OK] DB connected (not used, data in memory)")
+        except Error as e:
+            print(f"[INFO] DB connection test: {e} (not used, data in memory)")
+        self.categories = [{'id': 1, 'name': 'Напитки'}, {'id': 2, 'name': 'Десерты'}, {'id': 3, 'name': 'Завтраки'}]
+        self.clients = [{'id': 1, 'name': 'Михаил Федоров'}, {'id': 2, 'name': 'Анна Иванова'}, {'id': 3, 'name': 'Петр Сидоров'}]
+        self.menu_items = [
+            {'id': 1, 'name': 'Эспрессо', 'price': 150.00, 'description': 'Классический эспрессо', 'category_id': 1, 'is_available': True},
+            {'id': 2, 'name': 'Латте', 'price': 200.00, 'description': 'Кофе с молоком', 'category_id': 1, 'is_available': True},
+            {'id': 3, 'name': 'Капкейк', 'price': 180.00, 'description': 'Нежный капкейк с кремом', 'category_id': 2, 'is_available': True},
+            {'id': 4, 'name': 'Чизкейк', 'price': 250.00, 'description': 'Сливочный десерт на основе творога', 'category_id': 2, 'is_available': True},
+            {'id': 5, 'name': 'Капучино', 'price': 190.00, 'description': 'Кофе с молочной пеной', 'category_id': 1, 'is_available': True},
+            {'id': 6, 'name': 'Американо', 'price': 140.00, 'description': 'Эспрессо с горячей водой', 'category_id': 1, 'is_available': True},
+            {'id': 7, 'name': 'Тирамису', 'price': 280.00, 'description': 'Итальянский десерт с кофе', 'category_id': 2, 'is_available': True},
+            {'id': 8, 'name': 'Блины', 'price': 220.00, 'description': 'Тонкие блины с начинкой', 'category_id': 3, 'is_available': True}
+        ]
+        self.orders = []
+        self.order_items = []
+        self.next_order_id = 1
+        self.orders_widget = OrdersViewWidget(self.orders, self.clients, main_window=self)
+        self.stacked_widget.addWidget(self.orders_widget)
+        self.setCentralWidget(self.stacked_widget)
+        self.setWindowTitle("Система управления заказами (Демо-режим)")
+        self.resize(1200, 900)
+        self.setMinimumSize(1000, 700)
+        self.cart = {}
+        self.all_items = []
+        self.setup_connections()
+        self.setup_tables()
+        self.load_data()
+
+    def setup_connections(self):
+        self.ui_widget.line_search.textChanged.connect(self.apply_filters)
+        self.ui_widget.combo_category.currentIndexChanged.connect(self.apply_filters)
+        for radio in [self.ui_widget.radio_sort_none, self.ui_widget.radio_sort_asc, self.ui_widget.radio_sort_desc]:
+            radio.toggled.connect(self.apply_filters)
+        self.ui_widget.btn_create_order.clicked.connect(self.create_order)
+        self.ui_widget.check_no_client.stateChanged.connect(lambda: self.ui_widget.combo_client.setEnabled(not self.ui_widget.check_no_client.isChecked()))
+        self.ui_widget.combo_client.setEnabled(True)
+
+    def setup_tables(self):
+        widths = [200, 100, 80, 100, 120]
+        for i, w in enumerate(widths):
+            self.ui_widget.table_cart.setColumnWidth(i, w)
+        self.ui_widget.table_cart.setHorizontalHeaderLabels(["Наименование", "Цена, руб.", "Кол-во", "Стоимость", "Действие"])
+
+    def load_data(self):
+        self.ui_widget.combo_category.clear()
+        self.ui_widget.combo_category.addItem("Любая категория", None)
+        for cat in self.categories:
+            self.ui_widget.combo_category.addItem(cat['name'], cat['id'])
+        self.ui_widget.combo_client.clear()
+        for client in self.clients:
+            self.ui_widget.combo_client.addItem(client['name'], client['id'])
+        self.all_items = []
+        for item in self.menu_items:
+            if item['is_available']:
+                category_name = next((cat['name'] for cat in self.categories if cat['id'] == item['category_id']), 'Без категории')
+                self.all_items.append((item['id'], item['name'], category_name, item['price'], item['description'], item['category_id']))
+        self.apply_filters()
+
+    def apply_filters(self):
+        search = self.ui_widget.line_search.text().lower()
+        cat_id = self.ui_widget.combo_category.currentData()
+        items = [item for item in self.all_items if (not cat_id or item[5] == cat_id) and (not search or search in f"{item[1]} {item[2]} {item[4]}".lower())]
+        if self.ui_widget.radio_sort_asc.isChecked():
+            items.sort(key=lambda x: x[3])
+        elif self.ui_widget.radio_sort_desc.isChecked():
+            items.sort(key=lambda x: x[3], reverse=True)
+        self.display_menu(items)
+
+    def create_product_card(self, item):
+        card = load_ui('ui_product_card.ui') or QFrame()
+        if not isinstance(card, QFrame):
+            card = QFrame()
+        card.setFixedSize(200, 320)
+        iid, name, _, price, description, _ = item
+        if hasattr(card, 'label_name'):
+            card.label_name.setText(name)
+        if hasattr(card, 'label_description'):
+            card.label_description.setText(description or "Описание позиции")
+        if hasattr(card, 'label_price_value'):
+            card.label_price_value.setText(f"{float(price):.2f}")
+        card.item_data = item
+        if hasattr(card, 'btn_description'):
+            card.btn_description.clicked.connect(lambda: self.show_item_details_from_card(item))
+        if hasattr(card, 'btn_add'):
+            card.btn_add.clicked.connect(lambda: self.add_to_cart(item))
+        return card
+
+    def display_menu(self, items):
+        layout = self.ui_widget.scrollAreaWidgetContents_menu.layout()
+        while layout.count():
+            child = layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+        for idx, item in enumerate(items):
+            card = self.create_product_card(item)
+            layout.addWidget(card, idx // 4, idx % 4, Qt.AlignmentFlag.AlignTop)
+
+    def add_to_cart(self, item):
+        iid, name, _, price, _, _ = item
+        self.cart.setdefault(iid, {"name": name, "price": float(price), "qty": 0})
+        self.cart[iid]["qty"] += 1
+        self.update_cart()
+
+    def update_cart(self):
+        self.ui_widget.table_cart.setRowCount(0)
+        total = 0.0
+        for iid, d in self.cart.items():
+            row = self.ui_widget.table_cart.rowCount()
+            self.ui_widget.table_cart.insertRow(row)
+            self.ui_widget.table_cart.setItem(row, 0, QTableWidgetItem(d["name"]))
+            self.ui_widget.table_cart.setItem(row, 1, QTableWidgetItem(format_price(d['price'])))
+            spin = QSpinBox()
+            spin.setMinimum(1)
+            spin.setValue(d["qty"])
+            spin.valueChanged.connect(lambda v, i=iid: self.set_qty(i, v))
+            self.ui_widget.table_cart.setCellWidget(row, 2, spin)
+            s = d["price"] * d["qty"]
+            total += s
+            self.ui_widget.table_cart.setItem(row, 3, QTableWidgetItem(format_price(s)))
+            btn = QPushButton("Исключить")
+            btn.clicked.connect(lambda _, i=iid: self.remove_from_cart(i))
+            self.ui_widget.table_cart.setCellWidget(row, 4, btn)
+        self.ui_widget.label_total.setText(f"Стоимость корзины: {format_price(total)} руб.")
+
+    def set_qty(self, iid, val):
+        if val <= 0:
+            self.remove_from_cart(iid)
+        else:
+            self.cart[iid]["qty"] = val
+            self.update_cart()
+
+    def remove_from_cart(self, iid):
+        self.cart.pop(iid, None)
+        self.update_cart()
+
+    def create_order(self):
+        if not self.cart:
+            QMessageBox.warning(self, "Предупреждение", "Корзина пуста! Добавьте товары.")
+            return
+        client_id = self.ui_widget.combo_client.currentData() if not self.ui_widget.check_no_client.isChecked() else None
+        total = sum(d["price"] * d["qty"] for d in self.cart.values())
+        total_str = format_price(total)
+        client_name = "Без клиента" if client_id is None else self.ui_widget.combo_client.currentText()
+        items_count = sum(d["qty"] for d in self.cart.values())
+        reply = QMessageBox.question(self, "Подтверждение заказа", f"Вы уверены, что хотите оформить заказ?\n\nКлиент: {client_name}\nКоличество позиций: {items_count}\nОбщая сумма: {total_str} руб.", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        order_id = self.next_order_id
+        self.next_order_id += 1
+        order = {'id': order_id, 'client_id': client_id, 'total': total, 'date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'), 'status': 'Оформлен'}
+        self.orders.append(order)
+        for iid, d in self.cart.items():
+            self.order_items.append({'order_id': order_id, 'item_id': iid, 'qty': d['qty'], 'price': d['price']})
+        QMessageBox.information(self, "Заказ оформлен", f"Заказ успешно создан!\n\nНомер заказа: {order_id}\nКлиент: {client_name}\nСумма: {total_str} руб.\n\nКорзина очищена.")
+        self.reset_state()
+        self.show_orders_module()
+
+    def reset_state(self):
+        self.cart.clear()
+        self.update_cart()
+        self.ui_widget.line_search.clear()
+        self.ui_widget.combo_category.setCurrentIndex(0)
+        self.ui_widget.radio_sort_none.setChecked(True)
+        self.ui_widget.check_no_client.setChecked(False)
+        self.ui_widget.combo_client.setCurrentIndex(0)
+        if hasattr(self.ui_widget, 'combo_payment_type'):
+            self.ui_widget.combo_payment_type.setCurrentIndex(0)
+        if hasattr(self.ui_widget, 'radio_delivery_takeaway'):
+            self.ui_widget.radio_delivery_takeaway.setChecked(True)
+
+    def show_orders_module(self):
+        self.stacked_widget.setCurrentIndex(1)
+        self.orders_widget.load_orders()
+
+    def show_order_module(self):
+        self.stacked_widget.setCurrentIndex(0)
+
+    def show_item_details_from_card(self, item):
+        iid, name, _, _, description, _ = item
+        menu_item = next((m for m in self.menu_items if m['id'] == iid), None)
+        if menu_item:
+            name = menu_item['name']
+            description = menu_item['description'] or "Описание отсутствует"
+        else:
+            description = description or "Описание отсутствует"
+        dlg = ItemDetailsDialog(name, description, self)
+        dlg.exec()
+
+class ItemDetailsDialog(QDialog):
+    def __init__(self, name, description, parent=None):
+        super().__init__(parent)
+        check_ui_file('ui_item_details.ui')
+        self.ui_widget = load_ui('ui_item_details.ui', self)
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.ui_widget)
+        self.ui_widget.label_item_name.setText(f"Товар: {name}")
+        self.ui_widget.text_description.setPlainText(description or "Описание отсутствует.")
+        self.ui_widget.btn_close.clicked.connect(self.accept)
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    app.setStyle("Fusion")
+    if os.path.exists('icon.png'):
+        app.setWindowIcon(QIcon('icon.png'))
+    login = LoginDialog()
+    if login.exec() != QDialog.Accepted:
+        print("Авторизация отменена.")
+        sys.exit(0)
+    w = MainWindow()
+    w.setWindowIcon(QIcon('icon.png') if os.path.exists('icon.png') else QIcon())
+    w.show()
+    sys.exit(app.exec())
+    
+    
+'''
+
+    
+"""
+form.ui ;
+
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>Widget</class>
+ <widget class="QWidget" name="Widget">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>1055</width>
+    <height>823</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>Main Window Widget</string>
+  </property>
+  <layout class="QVBoxLayout" name="verticalLayout">
+   <item>
+    <layout class="QHBoxLayout" name="filtersLayout">
+     <item>
+      <widget class="QLineEdit" name="line_search">
+       <property name="placeholderText">
+        <string>Поиск...</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QComboBox" name="combo_category">
+       <item>
+        <property name="text">
+         <string>Любая категория</string>
+        </property>
+       </item>
+      </widget>
+     </item>
+     <item>
+      <widget class="QRadioButton" name="radio_sort_none">
+       <property name="text">
+        <string>Без сортировки</string>
+       </property>
+       <property name="checked">
+        <bool>true</bool>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QRadioButton" name="radio_sort_asc">
+       <property name="text">
+        <string>По возрастанию</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QRadioButton" name="radio_sort_desc">
+       <property name="text">
+        <string>По убыванию</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QScrollArea" name="scrollArea_menu">
+     <property name="widgetResizable">
+      <bool>true</bool>
+     </property>
+     <widget class="QWidget" name="scrollAreaWidgetContents_menu">
+      <property name="geometry">
+       <rect>
+        <x>0</x>
+        <y>0</y>
+        <width>1035</width>
+        <height>383</height>
+       </rect>
+      </property>
+      <layout class="QGridLayout" name="gridLayout_menu"/>
+     </widget>
+    </widget>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="cartLayout">
+     <item>
+      <layout class="QVBoxLayout" name="cartLeftLayout">
+       <item>
+        <widget class="QLabel" name="label_cart_title">
+         <property name="styleSheet">
+          <string>font-weight: bold; font-size: 14px;</string>
+         </property>
+         <property name="text">
+          <string>Корзина заказа</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QTableWidget" name="table_cart">
+         <property name="columnCount">
+          <number>5</number>
+         </property>
+         <property name="horizontalHeaderLabels" stdset="0">
+          <stringlist>
+           <string>Наименование</string>
+           <string>Цена, руб.</string>
+           <string>Кол-во</string>
+           <string>Стоимость</string>
+           <string>Действие</string>
+          </stringlist>
+         </property>
+         <column/>
+         <column/>
+         <column/>
+         <column/>
+         <column/>
+        </widget>
+       </item>
+      </layout>
+     </item>
+     <item>
+      <layout class="QVBoxLayout" name="cartRightLayout">
+       <item>
+        <widget class="QLabel" name="label_order_title">
+         <property name="styleSheet">
+          <string>font-weight: bold; font-size: 14px;</string>
+         </property>
+         <property name="text">
+          <string>Заказ клиента</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="clientLayout">
+         <item>
+          <widget class="QLabel" name="label_client">
+           <property name="text">
+            <string>Клиент:</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QComboBox" name="combo_client">
+           <property name="enabled">
+            <bool>true</bool>
+           </property>
+           <item>
+            <property name="text">
+             <string>Выберите клиента</string>
+            </property>
+           </item>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="check_no_client">
+         <property name="text">
+          <string>Без клиента</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QFrame" name="line_separator">
+         <property name="frameShape">
+          <enum>QFrame::Shape::HLine</enum>
+         </property>
+         <property name="frameShadow">
+          <enum>QFrame::Shadow::Sunken</enum>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="label_total">
+         <property name="styleSheet">
+          <string>font-size: 12px;</string>
+         </property>
+         <property name="text">
+          <string>Стоимость корзины: 0,00 руб.</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="label_payment_title">
+         <property name="styleSheet">
+          <string>font-weight: bold; font-size: 12px; margin-top: 10px;</string>
+         </property>
+         <property name="text">
+          <string>Метод оплаты</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="paymentTypeLayout">
+         <item>
+          <widget class="QLabel" name="label_payment_type">
+           <property name="text">
+            <string>Тип оплаты:</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QComboBox" name="combo_payment_type">
+           <item>
+            <property name="text">
+             <string>Выберите тип оплаты</string>
+            </property>
+           </item>
+           <item>
+            <property name="text">
+             <string>Наличные</string>
+            </property>
+           </item>
+           <item>
+            <property name="text">
+             <string>Банковская карта</string>
+            </property>
+           </item>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <widget class="QLabel" name="label_delivery_type">
+         <property name="text">
+          <string>Тип выдачи заказа:</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QRadioButton" name="radio_delivery_in">
+         <property name="text">
+          <string>В заведении</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QRadioButton" name="radio_delivery_takeaway">
+         <property name="text">
+          <string>На вынос</string>
+         </property>
+         <property name="checked">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QRadioButton" name="radio_delivery_courier">
+         <property name="text">
+          <string>Курьером</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <spacer name="verticalSpacer">
+         <property name="orientation">
+          <enum>Qt::Orientation::Vertical</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>20</width>
+           <height>40</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+       <item>
+        <widget class="QPushButton" name="btn_create_order">
+         <property name="styleSheet">
+          <string>background-color: #dc3545; color: white; font-weight: bold; font-size: 14px; padding: 10px;</string>
+         </property>
+         <property name="text">
+          <string>Оформить заказ</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </item>
+    </layout>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>
+
+ui_item_details.ui ;
+
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>Widget</class>
+ <widget class="QWidget" name="Widget">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>400</width>
+    <height>300</height>
+   </rect>
+  </property>
+  <layout class="QVBoxLayout" name="verticalLayout">
+   <item>
+    <widget class="QLabel" name="label_item_name">
+     <property name="text">
+      <string>Название товара</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QTextEdit" name="text_description"/>
+   </item>
+   <item>
+    <widget class="QPushButton" name="btn_close">
+     <property name="text">
+      <string>Закрыть</string>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>
+
+
+ui_login_dialog.ui ;
+
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>Widget</class>
+ <widget class="QWidget" name="Widget">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>300</width>
+    <height>200</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>Авторизация</string>
+  </property>
+  <layout class="QVBoxLayout" name="verticalLayout">
+   <item>
+    <widget class="QLineEdit" name="line_username">
+     <property name="placeholderText">
+      <string>Логин</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLineEdit" name="line_password">
+     <property name="echoMode">
+      <enum>QLineEdit::EchoMode::Password</enum>
+     </property>
+     <property name="placeholderText">
+      <string>Пароль</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QPushButton" name="btn_login">
+     <property name="text">
+      <string>Войти</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="label_status">
+     <property name="text">
+      <string>Введите логин и пароль</string>
+     </property>
+     <property name="alignment">
+      <set>Qt::AlignmentFlag::AlignCenter</set>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>
+
+ui_product_card.ui ;
+
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>ProductCard</class>
+ <widget class="QFrame" name="ProductCard">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>212</width>
+    <height>320</height>
+   </rect>
+  </property>
+  <property name="styleSheet">
+   <string>QFrame {
+    background-color: white;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+}</string>
+  </property>
+  <property name="frameShape">
+   <enum>QFrame::Shape::Box</enum>
+  </property>
+  <property name="frameShadow">
+   <enum>QFrame::Shadow::Raised</enum>
+  </property>
+  <layout class="QVBoxLayout" name="cardLayout">
+   <property name="spacing">
+    <number>6</number>
+   </property>
+   <property name="leftMargin">
+    <number>8</number>
+   </property>
+   <property name="topMargin">
+    <number>8</number>
+   </property>
+   <property name="rightMargin">
+    <number>8</number>
+   </property>
+   <property name="bottomMargin">
+    <number>8</number>
+   </property>
+   <item>
+    <widget class="QLabel" name="label_image">
+     <property name="minimumSize">
+      <size>
+       <width>0</width>
+       <height>120</height>
+      </size>
+     </property>
+     <property name="maximumSize">
+      <size>
+       <width>16777215</width>
+       <height>120</height>
+      </size>
+     </property>
+     <property name="styleSheet">
+      <string>QLabel {
+    border: 2px dashed #ccc;
+    border-radius: 3px;
+    background-color: #f5f5f5;
+    color: #999;
+    font-size: 10px;
+}</string>
+     </property>
+     <property name="text">
+      <string>Изображение позиции</string>
+     </property>
+     <property name="alignment">
+      <set>Qt::AlignmentFlag::AlignCenter</set>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="label_name">
+     <property name="maximumSize">
+      <size>
+       <width>16777215</width>
+       <height>40</height>
+      </size>
+     </property>
+     <property name="styleSheet">
+      <string>font-weight: bold; font-size: 13px; padding: 2px;</string>
+     </property>
+     <property name="text">
+      <string>Наименование позиции</string>
+     </property>
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="label_description">
+     <property name="maximumSize">
+      <size>
+       <width>16777215</width>
+       <height>50</height>
+      </size>
+     </property>
+     <property name="styleSheet">
+      <string>font-size: 10px; color: #666; padding: 2px;</string>
+     </property>
+     <property name="text">
+      <string>Описание позиции</string>
+     </property>
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <spacer name="verticalSpacer">
+     <property name="orientation">
+      <enum>Qt::Orientation::Vertical</enum>
+     </property>
+     <property name="sizeHint" stdset="0">
+      <size>
+       <width>20</width>
+       <height>40</height>
+      </size>
+     </property>
+    </spacer>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="bottomLayout">
+     <property name="spacing">
+      <number>4</number>
+     </property>
+     <item>
+      <layout class="QVBoxLayout" name="priceLayout">
+       <property name="spacing">
+        <number>2</number>
+       </property>
+       <item>
+        <widget class="QLabel" name="label_price_title">
+         <property name="styleSheet">
+          <string>color: #ff6600; font-weight: bold; font-size: 10px;</string>
+         </property>
+         <property name="text">
+          <string>Цена, руб.</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="label_price_value">
+         <property name="styleSheet">
+          <string>color: #ff6600; font-weight: bold; font-size: 12px;</string>
+         </property>
+         <property name="text">
+          <string>0.00</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="label_weight">
+         <property name="styleSheet">
+          <string>font-size: 9px; color: #999;</string>
+         </property>
+         <property name="text">
+          <string>Вес, гр./мл.</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </item>
+     <item>
+      <spacer name="horizontalSpacer">
+       <property name="orientation">
+        <enum>Qt::Orientation::Horizontal</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>20</width>
+         <height>20</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+     <item>
+      <widget class="QPushButton" name="btn_description">
+       <property name="minimumSize">
+        <size>
+         <width>60</width>
+         <height>0</height>
+        </size>
+       </property>
+       <property name="maximumSize">
+        <size>
+         <width>60</width>
+         <height>16777215</height>
+        </size>
+       </property>
+       <property name="styleSheet">
+        <string>QPushButton {
+    background-color: #6c757d;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    padding: 4px 6px;
+    font-weight: bold;
+    font-size: 9px;
+}
+QPushButton:hover {
+    background-color: #5a6268;
+}
+QPushButton:pressed {
+    background-color: #545b62;
+}</string>
+       </property>
+       <property name="text">
+        <string>Описание</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="btn_add">
+       <property name="minimumSize">
+        <size>
+         <width>60</width>
+         <height>0</height>
+        </size>
+       </property>
+       <property name="maximumSize">
+        <size>
+         <width>60</width>
+         <height>16777215</height>
+        </size>
+       </property>
+       <property name="styleSheet">
+        <string>QPushButton {
+    background-color: #dc3545;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    padding: 4px 6px;
+    font-weight: bold;
+    font-size: 9px;
+}
+QPushButton:hover {
+    background-color: #c82333;
+}
+QPushButton:pressed {
+    background-color: #bd2130;
+}</string>
+       </property>
+       <property name="text">
+        <string>Добавить</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>
+
+"""
