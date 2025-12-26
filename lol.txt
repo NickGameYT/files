@@ -1,0 +1,511 @@
+import sys
+import mysql.connector
+from PySide6.QtWidgets import (
+    QApplication,
+    QMainWindow,
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QComboBox,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QSpinBox,
+    QCheckBox,
+    QRadioButton,
+    QScrollArea,
+    QGridLayout,
+    QFrame,
+    QMessageBox,
+    QStackedWidget,
+    QDialog,
+    QGroupBox,
+    QButtonGroup,
+)
+from PySide6.QtCore import Qt, Signal
+
+# Конфигурация подключения к базе данных
+DATABASE_SETTINGS = {
+    "host": "127.0.0.1",
+    "user": "root",
+    "password": "Lbhtrnjh_4231",
+    "database": "cafeteria_db",
+    "port": 3305,
+}
+
+# Стили интерфейса
+INTERFACE_STYLES = """
+QMainWindow, QWidget, QDialog { 
+    background: #FFFFFF; 
+    color: #333333; 
+}
+QLabel { 
+    color: #333333; 
+}
+QPushButton { 
+    background: #FF5722; 
+    color: white; 
+    border: none; 
+    border-radius: 5px; 
+    padding: 10px; 
+    font-weight: bold; 
+}
+QPushButton:hover { 
+    background: #E64A19; 
+}
+QLineEdit, QComboBox, QSpinBox { 
+    border: 1px solid #E0E0E0; 
+    border-radius: 5px; 
+    padding: 8px; 
+    background: #FFFFFF; 
+    color: #333333; 
+}
+QComboBox QAbstractItemView { 
+    background: #FFFFFF; 
+    color: #333333; 
+}
+QTableWidget { 
+    background: #FFFFFF; 
+    color: #333333; 
+    gridline-color: #E0E0E0; 
+}
+QHeaderView::section { 
+    background: #F5F5F5; 
+    color: #333333; 
+    padding: 8px; 
+    border: 1px solid #E0E0E0; 
+}
+QCheckBox, QRadioButton { 
+    color: #333333; 
+}
+QScrollArea { 
+    background: #FAFAFA; 
+}
+QGroupBox { 
+    color: #333333; 
+}
+"""
+
+
+class AuthWindow(QDialog):
+    """Окно для входа в систему"""
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Вход в приложение")
+        self.setFixedSize(350, 200)
+        self.setStyleSheet(INTERFACE_STYLES)
+
+        main_layout = QVBoxLayout(self)
+        main_layout.addWidget(QLabel("<h2>Авторизация пользователя</h2>"))
+
+        main_layout.addWidget(QLabel("Имя пользователя:"))
+        self.username_field = QLineEdit()
+        self.username_field.setPlaceholderText("Введите имя пользователя")
+        main_layout.addWidget(self.username_field)
+
+        main_layout.addWidget(QLabel("Пароль:"))
+        self.password_field = QLineEdit()
+        self.password_field.setPlaceholderText("Введите пароль")
+        self.password_field.setEchoMode(QLineEdit.Password)
+        main_layout.addWidget(self.password_field)
+
+        self.auth_button = QPushButton("Войти в систему")
+        self.auth_button.clicked.connect(self.verify_credentials)
+        main_layout.addWidget(self.auth_button)
+
+    def verify_credentials(self):
+        username = self.username_field.text().strip()
+        password = self.password_field.text()
+
+        if not username or not password:
+            QMessageBox.warning(self, "Ошибка", "Необходимо ввести логин и пароль!")
+            return
+
+        if username == "admin" and password == "123":
+            self.accept()
+        else:
+            QMessageBox.warning(self, "Ошибка", "Неверные учетные данные!")
+
+
+class DatabaseManager:
+    def __init__(self):
+        try:
+            self.connection = mysql.connector.connect(**DATABASE_SETTINGS)
+        except Exception:
+            self.connection = None
+
+    def fetch_data(self, query, parameters=()):
+        if not self.connection:
+            return []
+        cursor = self.connection.cursor(dictionary=True)
+        cursor.execute(query, parameters)
+        results = cursor.fetchall()
+        cursor.close()
+        return results
+
+    def execute_query(self, query, parameters=()):
+        if not self.connection:
+            return None
+        cursor = self.connection.cursor()
+        cursor.execute(query, parameters)
+        self.connection.commit()
+        last_id = cursor.lastrowid
+        cursor.close()
+        return last_id
+
+
+class ItemWidget(QFrame):
+    added_to_cart = Signal(dict)
+    item_selected = Signal(dict)
+
+    def __init__(self, item_data):
+        super().__init__()
+        self.item_data = item_data
+        self.setFixedSize(250, 280)
+        self.setStyleSheet(
+            "QFrame { background: #FFFFFF; border: 1px solid #E0E0E0; border-radius: 8px; }"
+        )
+        self.setCursor(Qt.PointingHandCursor)
+
+        container_layout = QVBoxLayout(self)
+
+        image_label = QLabel("Изображение товара")
+        image_label.setAlignment(Qt.AlignCenter)
+        image_label.setFixedHeight(100)
+        image_label.setStyleSheet("background: #F5F5F5; border: 1px dashed #CCCCCC; color: #999999;")
+        container_layout.addWidget(image_label)
+
+        container_layout.addWidget(QLabel(f"<b>{item_data['name']}</b>"))
+        description = item_data.get("description", "")
+        if len(description) > 40:
+            description = description[:40] + "..."
+        container_layout.addWidget(QLabel(f"<span style='color:#777777'>{description}</span>"))
+        container_layout.addStretch()
+
+        bottom_panel = QHBoxLayout()
+        bottom_panel.addWidget(
+            QLabel(f"<b style='color:#FF5722'>{item_data['price']:.2f} руб.</b>")
+        )
+        bottom_panel.addWidget(
+            QLabel(f"<span style='color:#999999'>{item_data.get('weight', '')}</span>")
+        )
+        bottom_panel.addStretch()
+
+        add_button = QPushButton("В корзину")
+        add_button.setFixedSize(90, 30)
+        add_button.setStyleSheet(
+            "QPushButton { background: #FF5722; color: white; border: none; border-radius: 5px; font-weight: bold; } QPushButton:hover { background: #E64A19; }"
+        )
+        add_button.clicked.connect(lambda: self.added_to_cart.emit(self.item_data))
+        bottom_panel.addWidget(add_button)
+        container_layout.addLayout(bottom_panel)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.item_selected.emit(self.item_data)
+
+
+class ProductBrowser(QWidget):
+    item_added = Signal(dict)
+    show_basket = Signal()
+    view_details = Signal(dict)
+
+    def __init__(self, db_manager):
+        super().__init__()
+        self.db_manager = db_manager
+        self.current_sort = "ASC"
+
+        main_layout = QVBoxLayout(self)
+
+        header_panel = QHBoxLayout()
+        header_panel.addWidget(QLabel("<h2>Меню кафетерия</h2>"))
+        header_panel.addStretch()
+        basket_button = QPushButton("🛒 Перейти к корзине")
+        basket_button.clicked.connect(self.show_basket.emit)
+        header_panel.addWidget(basket_button)
+        main_layout.addLayout(header_panel)
+
+        filter_panel = QHBoxLayout()
+        self.search_field = QLineEdit()
+        self.search_field.setPlaceholderText("🔍 Поиск товаров...")
+        self.search_field.textChanged.connect(self.update_items)
+        filter_panel.addWidget(self.search_field)
+
+        self.category_filter = QComboBox()
+        self.category_filter.addItem("Все категории", None)
+        for category in db_manager.fetch_data("SELECT * FROM categories"):
+            self.category_filter.addItem(category["name"], category["id"])
+        self.category_filter.currentIndexChanged.connect(self.update_items)
+        filter_panel.addWidget(self.category_filter)
+
+        sort_up_button = QPushButton("По возрастанию цены")
+        sort_up_button.clicked.connect(lambda: self.change_sort("ASC"))
+        filter_panel.addWidget(sort_up_button)
+
+        sort_down_button = QPushButton("По убыванию цены")
+        sort_down_button.clicked.connect(lambda: self.change_sort("DESC"))
+        filter_panel.addWidget(sort_down_button)
+        main_layout.addLayout(filter_panel)
+
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setStyleSheet("border: none; background: #FAFAFA;")
+        self.items_container = QWidget()
+        self.grid_layout = QGridLayout(self.items_container)
+        self.grid_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        scroll_area.setWidget(self.items_container)
+        main_layout.addWidget(scroll_area)
+
+        self.update_items()
+
+    def change_sort(self, order):
+        self.current_sort = order
+        self.update_items()
+
+    def update_items(self):
+        while self.grid_layout.count():
+            widget = self.grid_layout.takeAt(0).widget()
+            if widget:
+                widget.deleteLater()
+
+        base_query = "SELECT p.*, c.name as category_name FROM products p LEFT JOIN categories c ON p.category_id=c.id WHERE p.is_active=1"
+        query_params = []
+
+        if self.search_field.text():
+            base_query += " AND (p.name LIKE %s OR p.description LIKE %s)"
+            query_params += [f"%{self.search_field.text()}%"] * 2
+
+        if self.category_filter.currentData():
+            base_query += " AND p.category_id=%s"
+            query_params.append(self.category_filter.currentData())
+
+        base_query += f" ORDER BY p.price {self.current_sort}"
+
+        product_list = self.db_manager.fetch_data(base_query, query_params)
+        for index, product in enumerate(product_list):
+            item_widget = ItemWidget(product)
+            item_widget.added_to_cart.connect(self.item_added.emit)
+            item_widget.item_selected.connect(self.view_details.emit)
+            self.grid_layout.addWidget(item_widget, index // 4, index % 4)
+
+
+class ShoppingBasket(QWidget):
+    back_to_menu = Signal()
+    order_completed = Signal()
+
+    def __init__(self, db_manager):
+        super().__init__()
+        self.db_manager = db_manager
+        self.basket_items = []
+
+        main_panel = QHBoxLayout(self)
+
+        left_section = QVBoxLayout()
+        back_button = QPushButton("← Вернуться в меню")
+        back_button.clicked.connect(self.back_to_menu.emit)
+        left_section.addWidget(back_button)
+        left_section.addWidget(QLabel("<h2>Содержимое корзины</h2>"))
+
+        self.items_table = QTableWidget()
+        self.items_table.setColumnCount(5)
+        self.items_table.setHorizontalHeaderLabels(
+            ["Название товара", "Цена за единицу", "Количество", "Общая стоимость", "Действия"]
+        )
+        left_section.addWidget(self.items_table)
+        main_panel.addLayout(left_section, 2)
+
+        right_section = QVBoxLayout()
+        right_section.addWidget(QLabel("<h2>Оформление заказа</h2>"))
+
+        self.customer_selector = QComboBox()
+        for customer in db_manager.fetch_data("SELECT * FROM clients"):
+            self.customer_selector.addItem(customer["name"] or customer["phone_number"], customer["phone_number"])
+        right_section.addWidget(self.customer_selector)
+
+        self.no_customer_check = QCheckBox("Без привязки к клиенту")
+        self.no_customer_check.stateChanged.connect(lambda state: self.customer_selector.setEnabled(not state))
+        right_section.addWidget(self.no_customer_check)
+
+        self.total_label = QLabel("<b style='color:#FF5722'>Общая сумма: 0.00 руб.</b>")
+        right_section.addWidget(self.total_label)
+
+        right_section.addWidget(QLabel("Способ оплаты:"))
+        self.payment_method = QComboBox()
+        self.payment_method.addItems(["Наличные", "Банковская карта", "Онлайн-оплата"])
+        right_section.addWidget(self.payment_method)
+
+        self.in_store_radio = QRadioButton("На месте")
+        self.in_store_radio.setChecked(True)
+        self.takeaway_radio = QRadioButton("На вынос")
+        self.delivery_radio = QRadioButton("Доставка")
+        right_section.addWidget(self.in_store_radio)
+        right_section.addWidget(self.takeaway_radio)
+        right_section.addWidget(self.delivery_radio)
+
+        right_section.addStretch()
+
+        confirm_button = QPushButton("Подтвердить заказ")
+        confirm_button.setMinimumHeight(50)
+        confirm_button.clicked.connect(self.process_order)
+        right_section.addWidget(confirm_button)
+        main_panel.addLayout(right_section, 1)
+
+    def add_item(self, product):
+        for basket_item in self.basket_items:
+            if basket_item["product"]["id"] == product["id"]:
+                basket_item["quantity"] += 1
+                self.refresh_display()
+                return
+        self.basket_items.append({"product": product, "quantity": 1})
+        self.refresh_display()
+
+    def refresh_display(self):
+        self.items_table.setRowCount(len(self.basket_items))
+        total_amount = 0
+        for row, item in enumerate(self.basket_items):
+            product_data, quantity = item["product"], item["quantity"]
+            unit_price = float(product_data["price"])
+            subtotal = unit_price * quantity
+            total_amount += subtotal
+
+            self.items_table.setItem(row, 0, QTableWidgetItem(product_data["name"]))
+            self.items_table.setItem(row, 1, QTableWidgetItem(f"{unit_price:.2f}"))
+
+            quantity_selector = QSpinBox()
+            quantity_selector.setRange(1, 99)
+            quantity_selector.setValue(quantity)
+            quantity_selector.valueChanged.connect(lambda value, r=row: self.change_quantity(r, value))
+            self.items_table.setCellWidget(row, 2, quantity_selector)
+
+            self.items_table.setItem(row, 3, QTableWidgetItem(f"{subtotal:.2f}"))
+
+            remove_button = QPushButton("Удалить")
+            remove_button.clicked.connect(lambda _, r=row: self.remove_item(r))
+            self.items_table.setCellWidget(row, 4, remove_button)
+
+        self.total_label.setText(f"<b style='color:#FF5722'>Общая сумма: {total_amount:.2f} руб.</b>")
+
+    def change_quantity(self, row, value):
+        if row < len(self.basket_items):
+            self.basket_items[row]["quantity"] = value
+            self.refresh_display()
+
+    def remove_item(self, row):
+        if row < len(self.basket_items):
+            self.basket_items.pop(row)
+            self.refresh_display()
+
+    def process_order(self):
+        if not self.basket_items:
+            QMessageBox.warning(self, "Ошибка", "Ваша корзина пуста!")
+            return
+
+        if QMessageBox.question(self, "Подтверждение", "Подтвердить оформление заказа?") != QMessageBox.Yes:
+            return
+
+        client_id = None if self.no_customer_check.isChecked() else self.customer_selector.currentData()
+        delivery_type = (
+            "На месте" if self.in_store_radio.isChecked() else ("На вынос" if self.takeaway_radio.isChecked() else "Доставка")
+        )
+        
+        total_cost = sum(float(item["product"]["price"]) * item["quantity"] for item in self.basket_items)
+
+        new_order_id = self.db_manager.execute_query(
+            """INSERT INTO orders (order_number, date_create, type_id, employer_id, total_cost, pay_id) 
+               VALUES ((SELECT IFNULL(MAX(order_number),0)+1 FROM orders o2), NOW(), %s, 1, %s, %s)""",
+            (
+                1 if self.in_store_radio.isChecked() else (2 if self.takeaway_radio.isChecked() else 3),
+                total_cost,
+                1 if self.payment_method.currentText() == "Наличные" else (2 if self.payment_method.currentText() == "Перевод на карту МИР" else 3),
+            ),
+        )
+
+        for basket_item in self.basket_items:
+            self.db_manager.execute_query(
+                "INSERT INTO order_shopcase (order_id, product_id, current_count) VALUES (%s,%s,%s)",
+                (new_order_id, basket_item["product"]["id"], basket_item["quantity"]),
+            )
+
+        QMessageBox.information(self, "Заказ оформлен", f"Ваш заказ #{new_order_id} успешно оформлен!")
+        self.basket_items = []
+        self.refresh_display()
+        self.order_completed.emit()
+
+
+class ItemDetailsDialog(QDialog):
+    _current_instance = None
+
+    @classmethod
+    def display_item(cls, item_data, parent):
+        if cls._current_instance:
+            cls._current_instance.close()
+        cls._current_instance = cls(item_data, parent)
+        cls._current_instance.show()
+
+    def __init__(self, item_data, parent):
+        super().__init__(parent)
+        self.setWindowTitle("Детальная информация о товаре")
+        self.setFixedSize(400, 350)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel(f"<h2>{item_data['name']}</h2>"))
+        layout.addWidget(QLabel(f"Категория: {item_data.get('category_name', '-')}"))
+        layout.addWidget(QLabel(f"Описание: {item_data.get('description', '-')}"))
+        layout.addWidget(
+            QLabel(f"<b style='color:#FF5722'>Цена: {item_data['price']:.2f} руб.</b>")
+        )
+        layout.addWidget(QLabel(f"Вес: {item_data.get('weight', '-')}"))
+        layout.addStretch()
+
+        close_button = QPushButton("Закрыть")
+        close_button.clicked.connect(self.close)
+        layout.addWidget(close_button)
+
+    def closeEvent(self, event):
+        ItemDetailsDialog._current_instance = None
+
+
+class MainApplicationWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Кафетерий - Система управления заказами")
+        self.setGeometry(100, 100, 1200, 700)
+        self.setStyleSheet(INTERFACE_STYLES)
+
+        self.database = DatabaseManager()
+
+        self.interface_stack = QStackedWidget()
+        self.setCentralWidget(self.interface_stack)
+
+        self.product_browser = ProductBrowser(self.database)
+        self.product_browser.item_added.connect(self.handle_item_addition)
+        self.product_browser.show_basket.connect(lambda: self.interface_stack.setCurrentIndex(1))
+        self.product_browser.view_details.connect(
+            lambda item: ItemDetailsDialog.display_item(item, self)
+        )
+        self.interface_stack.addWidget(self.product_browser)
+
+        self.shopping_basket = ShoppingBasket(self.database)
+        self.shopping_basket.back_to_menu.connect(lambda: self.interface_stack.setCurrentIndex(0))
+        self.shopping_basket.order_completed.connect(lambda: self.interface_stack.setCurrentIndex(0))
+        self.interface_stack.addWidget(self.shopping_basket)
+
+    def handle_item_addition(self, product):
+        self.shopping_basket.add_item(product)
+        QMessageBox.information(
+            self, "Товар добавлен", f"«{product['name']}» добавлен в корзину!"
+        )
+
+
+if __name__ == "__main__":
+    application = QApplication(sys.argv)
+    auth_dialog = AuthWindow()
+    if auth_dialog.exec() == QDialog.Accepted:
+        main_window = MainApplicationWindow()
+        main_window.show()
+        sys.exit(application.exec())
+    else:
+        sys.exit(0)
