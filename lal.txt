@@ -1,0 +1,81 @@
+import sys
+import mysql.connector
+from PySide6.QtWidgets import (
+    QApplication,
+    QMainWindow,
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QComboBox,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QSpinBox,
+    QCheckBox,
+    QRadioButton,
+    QScrollArea,
+    QGridLayout,
+    QFrame,
+    QMessageBox,
+    QStackedWidget,
+    QDialog,
+    QGroupBox,
+    QButtonGroup,
+)
+from PySide6.QtCore import Qt, Signal
+
+DB_CONFIG = {
+    "host": "localhost",
+    "user": "root",
+    "password": "Lbhtrnjh_4231",
+    "database": "cafeteria_db",
+    "port": 3305,
+}
+
+STYLE = """QMainWindow, QWidget, QDialog { background: #FFF; color: #333; }QLabel { color: #333; }QPushButton { background: #FF5722; color: white; border: none; border-radius: 5px; padding: 10px; font-weight: bold; }QPushButton:hover { background: #E64A19; }QLineEdit, QComboBox, QSpinBox { border: 1px solid #E0E0E0; border-radius: 5px; padding: 8px; background: #FFF; color: #333; }QComboBox QAbstractItemView { background: #FFF; color: #333; }QTableWidget { background: #FFF; color: #333; gridline-color: #E0E0E0; }QHeaderView::section { background: #F5F5F5; color: #333; padding: 8px; border: 1px solid #E0E0E0; }QCheckBox, QRadioButton { color: #333; }QScrollArea { background: #FAFAFA; }QGroupBox { color: #333; }
+"""
+
+
+class LoginDialog(QDialog):
+    """Окно авторизации"""
+
+    def init(self):
+        super().init()
+        self.setWindowTitle("Авторизация")
+        self.setFixedSize(350, 200)
+        self.setStyleSheet(STYLE)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("<h2>Вход в систему</h2>"))
+
+        layout.addWidget(QLabel("Логин:"))
+        self.login_input = QLineEdit()
+        self.login_input.setPlaceholderText("Введите логин")
+        layout.addWidget(self.login_input)
+
+        layout.addWidget(QLabel("Пароль:"))
+        self.password_input = QLineEdit()
+        self.password_input.setPlaceholderText("Введите пароль")
+        self.password_input.setEchoMode(QLineEdit.Password)
+        layout.addWidget(self.password_input)
+
+        self.login_btn = QPushButton("Войти")
+        self.login_btn.clicked.connect(self.check_login)
+        layout.addWidget(self.login_btn)
+
+        self.user = None
+
+    def check_login(self):
+        login = self.login_input.text().strip()
+        password = self.password_input.text()
+
+        if not login or not password:
+            QMessageBox.warning(self, "Ошибка", "Введите логин и пароль!")
+            return
+
+        if login == "admin" and password == "123":
+            self.accept()
+        else:
+            QMessageBox.warning(self, "Ошибка", "Неверный логин или пароль!")
