@@ -1,0 +1,987 @@
+"""
+Кафетерий - Система управления заказами
+Усовершенствованная версия с улучшенной архитектурой, обработкой ошибок и дополнительными функциями
+"""
+
+import sys
+import logging
+from datetime import datetime
+from typing import Optional, List, Dict, Any
+import mysql.connector
+from mysql.connector import Error
+from PySide6.QtWidgets import (
+    QApplication,
+    QMainWindow,
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QComboBox,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QSpinBox,
+    QCheckBox,
+    QRadioButton,
+    QScrollArea,
+    QGridLayout,
+    QFrame,
+    QMessageBox,
+    QStackedWidget,
+    QDialog,
+    QGroupBox,
+    QButtonGroup,
+    QProgressBar,
+    QStatusBar,
+    QToolBar,
+    QAction,
+    QTabWidget,
+    QSplitter,
+)
+from PySide6.QtCore import Qt, Signal, Slot, QTimer, QSize
+from PySide6.QtGui import QFont, QIcon, QPixmap, QColor
+
+# Настройка логирования
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('cafeteria_system.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# Конфигурация приложения
+class AppConfig:
+    """Конфигурационные настройки приложения"""
+    DATABASE_CONFIG = {
+        "host": "127.0.0.1",
+        "user": "root",
+        "password": "Lbhtrnjh_4231",
+        "database": "cafeteria_db",
+        "port": 3305,
+        "pool_name": "cafeteria_pool",
+        "pool_size": 5,
+        "autocommit": True
+    }
+    
+    APP_NAME = "Кафетерий Pro"
+    VERSION = "2.0.0"
+    COMPANY = "FoodTech Solutions"
+    
+    # Таймауты и лимиты
+    DB_CONNECTION_TIMEOUT = 10
+    MAX_RECONNECT_ATTEMPTS = 3
+    SESSION_TIMEOUT_MINUTES = 30
+    
+    # Пути (можно заменить на реальные)
+    ICON_PATHS = {
+        "app": "icons/app_icon.png",
+        "cart": "icons/cart.png",
+        "product": "icons/product.png",
+        "user": "icons/user.png",
+        "settings": "icons/settings.png"
+    }
+
+# Стилизация с поддержкой тем
+class ThemeManager:
+    """Менеджер тем оформления"""
+    
+    THEMES = {
+        "light": {
+            "primary": "#FF5722",
+            "primary_dark": "#E64A19",
+            "secondary": "#2196F3",
+            "background": "#FFFFFF",
+            "surface": "#FAFAFA",
+            "text_primary": "#212121",
+            "text_secondary": "#757575",
+            "border": "#E0E0E0",
+            "success": "#4CAF50",
+            "warning": "#FF9800",
+            "error": "#F44336",
+        },
+        "dark": {
+            "primary": "#FF7043",
+            "primary_dark": "#F4511E",
+            "secondary": "#64B5F6",
+            "background": "#121212",
+            "surface": "#1E1E1E",
+            "text_primary": "#FFFFFF",
+            "text_secondary": "#B0B0B0",
+            "border": "#424242",
+            "success": "#66BB6A",
+            "warning": "#FFB74D",
+            "error": "#EF5350",
+        }
+    }
+    
+    @classmethod
+    def get_style_sheet(cls, theme_name="light"):
+        """Генерация стилей для выбранной темы"""
+        theme = cls.THEMES.get(theme_name, cls.THEMES["light"])
+        
+        return f"""
+            /* Основные стили */
+            QMainWindow, QWidget, QDialog {{
+                background: {theme['background']};
+                color: {theme['text_primary']};
+                font-family: 'Segoe UI', Arial, sans-serif;
+            }}
+            
+            /* Заголовки */
+            QLabel[class="title"] {{
+                font-size: 18px;
+                font-weight: bold;
+                color: {theme['primary']};
+                padding: 10px 0;
+            }}
+            
+            QLabel[class="subtitle"] {{
+                font-size: 14px;
+                color: {theme['text_secondary']};
+            }}
+            
+            /* Кнопки */
+            QPushButton {{
+                background: {theme['primary']};
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 12px 20px;
+                font-weight: 600;
+                font-size: 14px;
+                transition: background 0.3s;
+            }}
+            
+            QPushButton:hover {{
+                background: {theme['primary_dark']};
+            }}
+            
+            QPushButton:disabled {{
+                background: {theme['border']};
+                color: {theme['text_secondary']};
+            }}
+            
+            QPushButton[class="secondary"] {{
+                background: {theme['secondary']};
+            }}
+            
+            QPushButton[class="secondary"]:hover {{
+                background: #1976D2;
+            }}
+            
+            QPushButton[class="small"] {{
+                padding: 6px 12px;
+                font-size: 12px;
+            }}
+            
+            /* Поля ввода */
+            QLineEdit, QComboBox, QSpinBox {{
+                border: 2px solid {theme['border']};
+                border-radius: 6px;
+                padding: 10px;
+                background: {theme['surface']};
+                color: {theme['text_primary']};
+                font-size: 14px;
+                selection-background-color: {theme['primary']};
+            }}
+            
+            QLineEdit:focus, QComboBox:focus, QSpinBox:focus {{
+                border-color: {theme['primary']};
+            }}
+            
+            QComboBox::drop-down {{
+                border: none;
+            }}
+            
+            QComboBox QAbstractItemView {{
+                background: {theme['surface']};
+                color: {theme['text_primary']};
+                border: 1px solid {theme['border']};
+                selection-background-color: {theme['primary']};
+            }}
+            
+            /* Таблицы */
+            QTableWidget {{
+                background: {theme['surface']};
+                color: {theme['text_primary']};
+                gridline-color: {theme['border']};
+                border: 1px solid {theme['border']};
+                border-radius: 6px;
+                font-size: 14px;
+            }}
+            
+            QTableWidget::item {{
+                padding: 8px;
+            }}
+            
+            QTableWidget::item:selected {{
+                background: {theme['primary']};
+                color: white;
+            }}
+            
+            QHeaderView::section {{
+                background: {theme['surface']};
+                color: {theme['text_primary']};
+                padding: 12px;
+                border: 1px solid {theme['border']};
+                font-weight: bold;
+            }}
+            
+            /* Фреймы и карточки */
+            QFrame[class="card"] {{
+                background: {theme['surface']};
+                border: 1px solid {theme['border']};
+                border-radius: 10px;
+                padding: 15px;
+            }}
+            
+            QFrame[class="highlight"] {{
+                border: 2px solid {theme['primary']};
+            }}
+            
+            /* Чекбоксы и радиокнопки */
+            QCheckBox, QRadioButton {{
+                color: {theme['text_primary']};
+                font-size: 14px;
+                spacing: 10px;
+            }}
+            
+            QCheckBox::indicator, QRadioButton::indicator {{
+                width: 18px;
+                height: 18px;
+            }}
+            
+            /* Прогресс-бар */
+            QProgressBar {{
+                border: 1px solid {theme['border']};
+                border-radius: 4px;
+                text-align: center;
+                background: {theme['surface']};
+            }}
+            
+            QProgressBar::chunk {{
+                background: {theme['primary']};
+                border-radius: 4px;
+            }}
+            
+            /* Вспомогательные классы */
+            .success {{ color: {theme['success']}; }}
+            .warning {{ color: {theme['warning']}; }}
+            .error {{ color: {theme['error']}; }}
+            .primary {{ color: {theme['primary']}; }}
+            
+            /* ToolBar */
+            QToolBar {{
+                background: {theme['surface']};
+                border-bottom: 1px solid {theme['border']};
+                spacing: 10px;
+                padding: 5px;
+            }}
+            
+            QToolBar QToolButton {{
+                padding: 8px;
+                border-radius: 4px;
+            }}
+            
+            QToolBar QToolButton:hover {{
+                background: rgba(255, 87, 34, 0.1);
+            }}
+        """
+
+
+class EnhancedDatabaseManager:
+    """Усовершенствованный менеджер базы данных с пулом соединений и обработкой ошибок"""
+    
+    _instance = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+    
+    def __init__(self):
+        if self._initialized:
+            return
+            
+        self.config = AppConfig.DATABASE_CONFIG
+        self.connection_pool = None
+        self.reconnect_attempts = 0
+        self._initialize_pool()
+        self._initialized = True
+    
+    def _initialize_pool(self):
+        """Инициализация пула соединений"""
+        try:
+            self.connection_pool = mysql.connector.pooling.MySQLConnectionPool(
+                **self.config
+            )
+            logger.info("Пул соединений с базой данных успешно инициализирован")
+        except Error as e:
+            logger.error(f"Ошибка инициализации пула соединений: {e}")
+            self.connection_pool = None
+    
+    def get_connection(self):
+        """Получение соединения из пула с повторными попытками"""
+        if not self.connection_pool:
+            self._initialize_pool()
+            
+        for attempt in range(AppConfig.MAX_RECONNECT_ATTEMPTS):
+            try:
+                conn = self.connection_pool.get_connection()
+                if conn.is_connected():
+                    self.reconnect_attempts = 0
+                    return conn
+            except Error as e:
+                logger.warning(f"Попытка {attempt + 1}: Не удалось получить соединение: {e}")
+                if attempt < AppConfig.MAX_RECONNECT_ATTEMPTS - 1:
+                    import time
+                    time.sleep(1)
+        
+        logger.error("Не удалось установить соединение с базой данных после всех попыток")
+        return None
+    
+    def execute_query(self, query: str, params: tuple = (), fetch_all: bool = True):
+        """Выполнение SQL-запроса с обработкой ошибок"""
+        conn = self.get_connection()
+        if not conn:
+            return [] if fetch_all else None
+            
+        try:
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute(query, params)
+            
+            if fetch_all:
+                result = cursor.fetchall()
+            else:
+                result = cursor.fetchone()
+            
+            if query.strip().upper().startswith(('INSERT', 'UPDATE', 'DELETE')):
+                conn.commit()
+                last_id = cursor.lastrowid
+                logger.info(f"Запрос выполнен: {query[:50]}...")
+                return last_id if last_id else cursor.rowcount
+            
+            cursor.close()
+            return result
+            
+        except Error as e:
+            logger.error(f"Ошибка выполнения запроса: {e}\nЗапрос: {query}")
+            conn.rollback()
+            return [] if fetch_all else None
+        finally:
+            if conn:
+                conn.close()
+    
+    def health_check(self) -> bool:
+        """Проверка работоспособности базы данных"""
+        try:
+            result = self.execute_query("SELECT 1 as status", fetch_all=False)
+            return result is not None and result.get('status') == 1
+        except:
+            return False
+
+
+class EnhancedAuthDialog(QDialog):
+    """Усовершенствованное окно авторизации"""
+    
+    login_successful = Signal(str)  # Сигнал с именем пользователя
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"{AppConfig.APP_NAME} - Авторизация")
+        self.setFixedSize(420, 300)
+        self.setStyleSheet(ThemeManager.get_style_sheet())
+        
+        self.user_role = None
+        self.setup_ui()
+        self.setup_connections()
+    
+    def setup_ui(self):
+        """Настройка интерфейса"""
+        main_layout = QVBoxLayout(self)
+        main_layout.setSpacing(20)
+        main_layout.setContentsMargins(30, 30, 30, 30)
+        
+        # Заголовок
+        title_label = QLabel(f"<h1>🔐 {AppConfig.APP_NAME}</h1>")
+        title_label.setAlignment(Qt.AlignCenter)
+        title_label.setProperty("class", "title")
+        main_layout.addWidget(title_label)
+        
+        # Поля ввода
+        form_layout = QVBoxLayout()
+        form_layout.setSpacing(15)
+        
+        # Логин
+        login_layout = QVBoxLayout()
+        login_label = QLabel("Имя пользователя:")
+        login_label.setProperty("class", "subtitle")
+        self.username_input = QLineEdit()
+        self.username_input.setPlaceholderText("Введите ваш логин")
+        self.username_input.setMinimumHeight(40)
+        login_layout.addWidget(login_label)
+        login_layout.addWidget(self.username_input)
+        form_layout.addLayout(login_layout)
+        
+        # Пароль
+        password_layout = QVBoxLayout()
+        password_label = QLabel("Пароль:")
+        password_label.setProperty("class", "subtitle")
+        self.password_input = QLineEdit()
+        self.password_input.setPlaceholderText("Введите ваш пароль")
+        self.password_input.setEchoMode(QLineEdit.Password)
+        self.password_input.setMinimumHeight(40)
+        password_layout.addWidget(password_label)
+        password_layout.addWidget(self.password_input)
+        form_layout.addLayout(password_layout)
+        
+        # Роль пользователя
+        role_layout = QVBoxLayout()
+        role_label = QLabel("Роль:")
+        role_label.setProperty("class", "subtitle")
+        self.role_combo = QComboBox()
+        self.role_combo.addItems(["Оператор-кассир", "Администратор", "Менеджер"])
+        self.role_combo.setMinimumHeight(40)
+        role_layout.addWidget(role_label)
+        role_layout.addWidget(self.role_combo)
+        form_layout.addLayout(role_layout)
+        
+        main_layout.addLayout(form_layout)
+        
+        # Кнопки
+        button_layout = QHBoxLayout()
+        self.login_button = QPushButton("Войти в систему")
+        self.login_button.setMinimumHeight(45)
+        self.login_button.setProperty("class", "primary")
+        
+        self.cancel_button = QPushButton("Отмена")
+        self.cancel_button.setMinimumHeight(45)
+        self.cancel_button.setProperty("class", "secondary")
+        
+        button_layout.addWidget(self.cancel_button)
+        button_layout.addWidget(self.login_button)
+        main_layout.addLayout(button_layout)
+        
+        # Статус
+        self.status_label = QLabel("")
+        self.status_label.setAlignment(Qt.AlignCenter)
+        self.status_label.setProperty("class", "subtitle")
+        main_layout.addWidget(self.status_label)
+    
+    def setup_connections(self):
+        """Настройка сигналов"""
+        self.login_button.clicked.connect(self.authenticate_user)
+        self.cancel_button.clicked.connect(self.reject)
+        
+        # Ввод по Enter
+        self.username_input.returnPressed.connect(self.authenticate_user)
+        self.password_input.returnPressed.connect(self.authenticate_user)
+    
+    @Slot()
+    def authenticate_user(self):
+        """Аутентификация пользователя"""
+        username = self.username_input.text().strip()
+        password = self.password_input.text()
+        role = self.role_combo.currentText()
+        
+        if not username or not password:
+            self.show_status("Заполните все поля!", "error")
+            return
+        
+        # Имитация проверки (в реальном приложении здесь был бы запрос к БД)
+        valid_users = {
+            "admin": "123",
+            "operator": "123",
+            "manager": "123"
+        }
+        
+        if username in valid_users and password == valid_users[username]:
+            self.user_role = role
+            self.show_status(f"Добро пожаловать, {username}!", "success")
+            QTimer.singleShot(1000, lambda: self.accept_login(username))
+        else:
+            self.show_status("Неверные учетные данные!", "error")
+            self.password_input.clear()
+    
+    def accept_login(self, username):
+        """Принять вход и отправить сигнал"""
+        self.login_successful.emit(username)
+        self.accept()
+    
+    def show_status(self, message: str, msg_type: str = "info"):
+        """Показать статусное сообщение"""
+        color_map = {
+            "success": "green",
+            "error": "red",
+            "warning": "orange",
+            "info": "blue"
+        }
+        
+        self.status_label.setText(message)
+        self.status_label.setStyleSheet(f"color: {color_map.get(msg_type, 'black')};")
+
+
+class ProductCard(QFrame):
+    """Усовершенствованная карточка товара"""
+    
+    add_to_cart = Signal(dict)
+    view_details = Signal(dict)
+    quick_add = Signal(dict, int)  # Товар и количество
+    
+    def __init__(self, product_data: Dict[str, Any]):
+        super().__init__()
+        self.product_data = product_data
+        self.setup_ui()
+        self.setup_style()
+        self.setup_connections()
+    
+    def setup_ui(self):
+        """Настройка интерфейса карточки"""
+        self.setFixedSize(280, 350)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setProperty("class", "card")
+        
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+        layout.setContentsMargins(15, 15, 15, 15)
+        
+        # Изображение товара
+        self.image_label = QLabel()
+        self.image_label.setFixedSize(250, 120)
+        self.image_label.setAlignment(Qt.AlignCenter)
+        self.load_product_image()
+        layout.addWidget(self.image_label)
+        
+        # Название товара
+        name_label = QLabel(f"<b>{self.product_data.get('name', 'Без названия')}</b>")
+        name_label.setWordWrap(True)
+        name_label.setMaximumHeight(40)
+        layout.addWidget(name_label)
+        
+        # Описание
+        description = self.product_data.get('description', '')
+        if len(description) > 60:
+            description = description[:60] + '...'
+        desc_label = QLabel(description)
+        desc_label.setWordWrap(True)
+        desc_label.setStyleSheet("color: #666; font-size: 12px;")
+        layout.addWidget(desc_label)
+        
+        # Категория
+        category = self.product_data.get('category_name', 'Без категории')
+        cat_label = QLabel(f"📁 {category}")
+        cat_label.setStyleSheet("color: #888; font-size: 11px;")
+        layout.addWidget(cat_label)
+        
+        layout.addStretch()
+        
+        # Панель с ценой и кнопками
+        bottom_panel = QHBoxLayout()
+        
+        # Цена
+        price = float(self.product_data.get('price', 0))
+        price_label = QLabel(f"<b style='color: #FF5722; font-size: 16px;'>{price:.2f} ₽</b>")
+        bottom_panel.addWidget(price_label)
+        
+        bottom_panel.addStretch()
+        
+        # Кнопка быстрого добавления
+        self.quick_add_btn = QPushButton("+1")
+        self.quick_add_btn.setFixedSize(40, 30)
+        self.quick_add_btn.setToolTip("Быстро добавить 1 шт.")
+        bottom_panel.addWidget(self.quick_add_btn)
+        
+        # Основная кнопка добавления
+        self.add_btn = QPushButton("В корзину")
+        self.add_btn.setFixedSize(90, 30)
+        self.add_btn.setProperty("class", "small")
+        bottom_panel.addWidget(self.add_btn)
+        
+        layout.addLayout(bottom_panel)
+    
+    def load_product_image(self):
+        """Загрузка изображения товара"""
+        # В реальном приложении здесь была бы загрузка из базы данных или файловой системы
+        self.image_label.setText("🖼️\nИзображение\nтовара")
+        self.image_label.setStyleSheet("""
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #F5F5F5, stop:1 #EEEEEE);
+            border: 2px dashed #DDD;
+            border-radius: 8px;
+            color: #999;
+            font-size: 12px;
+        """)
+    
+    def setup_style(self):
+        """Настройка стилей"""
+        self.setStyleSheet("""
+            ProductCard:hover {
+                border: 2px solid #FF5722;
+                background: #FFF8F6;
+            }
+        """)
+    
+    def setup_connections(self):
+        """Настройка сигналов"""
+        self.add_btn.clicked.connect(
+            lambda: self.add_to_cart.emit(self.product_data)
+        )
+        self.quick_add_btn.clicked.connect(
+            lambda: self.quick_add.emit(self.product_data, 1)
+        )
+    
+    def mouseDoubleClickEvent(self, event):
+        """Обработка двойного клика для просмотра деталей"""
+        if event.button() == Qt.LeftButton:
+            self.view_details.emit(self.product_data)
+    
+    def enterEvent(self, event):
+        """Эффект при наведении"""
+        self.setProperty("class", "card highlight")
+        self.style().polish(self)
+    
+    def leaveEvent(self, event):
+        """Эффект при уходе курсора"""
+        self.setProperty("class", "card")
+        self.style().polish(self)
+
+
+class EnhancedProductCatalog(QWidget):
+    """Усовершенствованный каталог товаров"""
+    
+    item_added = Signal(dict)
+    show_cart = Signal()
+    show_product_details = Signal(dict)
+    
+    def __init__(self, db_manager: EnhancedDatabaseManager):
+        super().__init__()
+        self.db = db_manager
+        self.current_sort = "price_asc"
+        self.current_category = None
+        self.setup_ui()
+        self.load_initial_data()
+    
+    def setup_ui(self):
+        """Настройка интерфейса каталога"""
+        main_layout = QVBoxLayout(self)
+        main_layout.setSpacing(15)
+        main_layout.setContentsMargins(20, 20, 20, 20)
+        
+        # Верхняя панель с заголовком и статистикой
+        header_layout = QHBoxLayout()
+        
+        title_label = QLabel("<h1>🍽️ Меню кафетерия</h1>")
+        title_label.setProperty("class", "title")
+        header_layout.addWidget(title_label)
+        
+        header_layout.addStretch()
+        
+        # Статистика
+        self.stats_label = QLabel("Загружается...")
+        self.stats_label.setProperty("class", "subtitle")
+        header_layout.addWidget(self.stats_label)
+        
+        # Кнопка корзины
+        self.cart_button = QPushButton("🛒 Корзина (0)")
+        self.cart_button.setProperty("class", "secondary")
+        self.cart_button.clicked.connect(self.show_cart.emit)
+        header_layout.addWidget(self.cart_button)
+        
+        main_layout.addLayout(header_layout)
+        
+        # Панель фильтров
+        filters_group = QGroupBox("Фильтры и поиск")
+        filters_layout = QGridLayout()
+        
+        # Поиск
+        search_label = QLabel("Поиск:")
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Введите название или описание товара...")
+        self.search_input.textChanged.connect(self.apply_filters)
+        filters_layout.addWidget(search_label, 0, 0)
+        filters_layout.addWidget(self.search_input, 0, 1, 1, 3)
+        
+        # Категории
+        category_label = QLabel("Категория:")
+        self.category_combo = QComboBox()
+        self.category_combo.currentIndexChanged.connect(self.apply_filters)
+        filters_layout.addWidget(category_label, 1, 0)
+        filters_layout.addWidget(self.category_combo, 1, 1)
+        
+        # Сортировка
+        sort_label = QLabel("Сортировка:")
+        self.sort_combo = QComboBox()
+        self.sort_combo.addItems([
+            "По цене (возрастание)",
+            "По цене (убывание)",
+            "По названию (А-Я)",
+            "По названию (Я-А)",
+            "По популярности"
+        ])
+        self.sort_combo.currentIndexChanged.connect(self.apply_filters)
+        filters_layout.addWidget(sort_label, 1, 2)
+        filters_layout.addWidget(self.sort_combo, 1, 3)
+        
+        # Кнопки сброса
+        reset_button = QPushButton("Сбросить фильтры")
+        reset_button.clicked.connect(self.reset_filters)
+        filters_layout.addWidget(reset_button, 2, 3)
+        
+        filters_group.setLayout(filters_layout)
+        main_layout.addWidget(filters_group)
+        
+        # Область с товарами
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        
+        self.products_container = QWidget()
+        self.grid_layout = QGridLayout(self.products_container)
+        self.grid_layout.setSpacing(20)
+        self.grid_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        
+        self.scroll_area.setWidget(self.products_container)
+        main_layout.addWidget(self.scroll_area, 1)
+        
+        # Панель состояния
+        self.status_bar = QStatusBar()
+        self.status_bar.showMessage("Готово")
+        main_layout.addWidget(self.status_bar)
+    
+    def load_initial_data(self):
+        """Загрузка начальных данных"""
+        self.load_categories()
+        self.apply_filters()
+    
+    def load_categories(self):
+        """Загрузка категорий из базы данных"""
+        self.category_combo.clear()
+        self.category_combo.addItem("Все категории", None)
+        
+        try:
+            categories = self.db.execute_query(
+                "SELECT id, name, COUNT(p.id) as product_count "
+                "FROM categories c LEFT JOIN products p ON c.id = p.category_id "
+                "WHERE p.is_active = 1 OR p.is_active IS NULL "
+                "GROUP BY c.id, c.name ORDER BY c.name"
+            )
+            
+            for cat in categories:
+                self.category_combo.addItem(
+                    f"{cat['name']} ({cat['product_count']})",
+                    cat['id']
+                )
+        except Exception as e:
+            logger.error(f"Ошибка загрузки категорий: {e}")
+    
+    def apply_filters(self):
+        """Применение фильтров и загрузка товаров"""
+        search_text = self.search_input.text().strip()
+        category_id = self.category_combo.currentData()
+        sort_index = self.sort_combo.currentIndex()
+        
+        # Определение порядка сортировки
+        sort_map = {
+            0: "p.price ASC",
+            1: "p.price DESC",
+            2: "p.name ASC",
+            3: "p.name DESC",
+            4: "p.popularity DESC, p.name ASC"
+        }
+        sort_order = sort_map.get(sort_index, "p.name ASC")
+        
+        # Построение запроса
+        query = """
+            SELECT p.*, c.name as category_name, 
+                   COALESCE(SUM(os.current_count), 0) as total_sold
+            FROM products p 
+            LEFT JOIN categories c ON p.category_id = c.id
+            LEFT JOIN order_shopcase os ON p.id = os.product_id
+            WHERE p.is_active = 1
+        """
+        params = []
+        
+        if search_text:
+            query += " AND (p.name LIKE %s OR p.description LIKE %s)"
+            params.extend([f"%{search_text}%", f"%{search_text}%"])
+        
+        if category_id:
+            query += " AND p.category_id = %s"
+            params.append(category_id)
+        
+        query += f" GROUP BY p.id, p.name, p.price, p.description, p.category_id, c.name"
+        query += f" ORDER BY {sort_order}"
+        
+        # Загрузка товаров
+        self.load_products(query, params)
+    
+    def load_products(self, query: str, params: list):
+        """Загрузка товаров из базы данных"""
+        # Очистка контейнера
+        while self.grid_layout.count():
+            item = self.grid_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        
+        try:
+            products = self.db.execute_query(query, params)
+            
+            if not products:
+                empty_label = QLabel("Товары не найдены. Измените параметры поиска.")
+                empty_label.setAlignment(Qt.AlignCenter)
+                empty_label.setStyleSheet("font-size: 16px; color: #999; padding: 50px;")
+                self.grid_layout.addWidget(empty_label, 0, 0, 1, 4)
+                self.stats_label.setText("Товаров не найдено")
+                return
+            
+            # Отображение товаров
+            for i, product in enumerate(products):
+                row = i // 4
+                col = i % 4
+                
+                card = ProductCard(product)
+                card.add_to_cart.connect(self.item_added.emit)
+                card.view_details.connect(self.show_product_details.emit)
+                card.quick_add.connect(self.handle_quick_add)
+                
+                self.grid_layout.addWidget(card, row, col)
+            
+            # Обновление статистики
+            total_value = sum(float(p['price']) * float(p.get('total_sold', 0)) for p in products)
+            self.stats_label.setText(
+                f"Товаров: {len(products)} | "
+                f"Общая стоимость: {total_value:,.2f} ₽"
+            )
+            self.status_bar.showMessage(f"Загружено {len(products)} товаров", 3000)
+            
+        except Exception as e:
+            logger.error(f"Ошибка загрузки товаров: {e}")
+            self.status_bar.showMessage(f"Ошибка загрузки: {str(e)}", 5000)
+    
+    def reset_filters(self):
+        """Сброс всех фильтров"""
+        self.search_input.clear()
+        self.category_combo.setCurrentIndex(0)
+        self.sort_combo.setCurrentIndex(0)
+    
+    def handle_quick_add(self, product: dict, quantity: int):
+        """Обработка быстрого добавления товара"""
+        # Временное увеличение количества
+        product_copy = product.copy()
+        for _ in range(quantity - 1):
+            self.item_added.emit(product_copy)
+        
+        # Основное добавление
+        self.item_added.emit(product)
+        self.show_notification(f"Добавлено {quantity} шт. '{product['name']}'")
+    
+    def show_notification(self, message: str):
+        """Показать уведомление"""
+        self.status_bar.showMessage(message, 2000)
+    
+    def update_cart_count(self, count: int):
+        """Обновление счетчика корзины"""
+        self.cart_button.setText(f"🛒 Корзина ({count})")
+
+
+class EnhancedShoppingCart(QWidget):
+    """Усовершенствованная корзина заказов"""
+    
+    return_to_catalog = Signal()
+    order_processed = Signal(int)  # Сигнал с ID заказа
+    
+    def __init__(self, db_manager: EnhancedDatabaseManager):
+        super().__init__()
+        self.db = db_manager
+        self.cart_items = []
+        self.total_amount = 0.0
+        self.setup_ui()
+        self.load_clients()
+    
+    def setup_ui(self):
+        """Настройка интерфейса корзины"""
+        main_splitter = QSplitter(Qt.Horizontal)
+        
+        # Левая панель - товары в корзине
+        left_widget = QWidget()
+        left_layout = QVBoxLayout(left_widget)
+        left_layout.setSpacing(15)
+        
+        # Заголовок и кнопка назад
+        header_layout = QHBoxLayout()
+        back_button = QPushButton("← Назад к каталогу")
+        back_button.clicked.connect(self.return_to_catalog.emit)
+        header_layout.addWidget(back_button)
+        
+        header_layout.addStretch()
+        
+        title_label = QLabel("<h1>🛒 Ваша корзина</h1>")
+        title_label.setProperty("class", "title")
+        header_layout.addWidget(title_label)
+        
+        header_layout.addStretch()
+        
+        clear_button = QPushButton("Очистить корзину")
+        clear_button.clicked.connect(self.clear_cart)
+        clear_button.setProperty("class", "secondary")
+        header_layout.addWidget(clear_button)
+        
+        left_layout.addLayout(header_layout)
+        
+        # Таблица товаров
+        self.cart_table = QTableWidget()
+        self.cart_table.setColumnCount(6)
+        self.cart_table.setHorizontalHeaderLabels([
+            "№", "Наименование", "Цена", "Кол-во", "Сумма", "Действия"
+        ])
+        self.cart_table.horizontalHeader().setStretchLastSection(True)
+        left_layout.addWidget(self.cart_table, 1)
+        
+        # Итоговая сумма
+        total_layout = QHBoxLayout()
+        total_layout.addStretch()
+        self.total_label = QLabel("<h2>Итого: 0.00 ₽</h2>")
+        self.total_label.setStyleSheet("color: #FF5722; font-weight: bold;")
+        total_layout.addWidget(self.total_label)
+        left_layout.addLayout(total_layout)
+        
+        main_splitter.addWidget(left_widget)
+        
+        # Правая панель - оформление заказа
+        right_widget = QWidget()
+        right_layout = QVBoxLayout(right_widget)
+        right_layout.setSpacing(20)
+        
+        order_group = QGroupBox("Оформление заказа")
+        order_layout = QVBoxLayout()
+        
+        # Клиент
+        client_layout = QVBoxLayout()
+        client_label = QLabel("Клиент:")
+        self.client_combo = QComboBox()
+        self.client_combo.setMinimumHeight(40)
+        client_layout.addWidget(client_label)
+        client_layout.addWidget(self.client_combo)
+        
+        self.no_client_check = QCheckBox("Без регистрации клиента")
+        self.no_client_check.stateChanged.connect(
+            lambda s: self.client_combo.setEnabled(not s)
+        )
+        client_layout.addWidget(self.no_client_check)
+        order_layout.addLayout(client_layout)
+        
+        # Тип заказа
+        type_group = QGroupBox("Тип получения")
+        type_layout = QVBoxLayout()
+        
+        self.type_button_group = QButtonGroup(self)
+        self.type_in_store = QRadioButton("🍽️ В заведении")
+        self.type_takeaway = QRadioButton("🥡 На вынос")
+        self.type_delivery = QRadioButton("🚚 Доставка")
+        
+        self.type_button_group.addButton(self.type_in_store, 1
